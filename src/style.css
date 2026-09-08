@@ -1,0 +1,52 @@
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #0b0d10;
+}
+
+#rig {
+  display: block;
+  width: 100vw;
+  height: 100vh;
+}
+
+/* Dev-only composite overlay (viewport labels + inspector button). */
+#labels {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 10;
+}
+
+.vp-label {
+  position: absolute;
+  font: 600 11px ui-monospace, "Cascadia Mono", Consolas, monospace;
+  letter-spacing: 0.08em;
+  color: #e5edf5;
+  background: rgba(11, 13, 16, 0.72);
+  padding: 3px 8px;
+  border-bottom-right-radius: 6px;
+}
+
+#open-inspector {
+  position: fixed;
+  right: 10px;
+  bottom: 10px;
+  z-index: 20;
+  font: 600 11px ui-monospace, "Cascadia Mono", Consolas, monospace;
+  letter-spacing: 0.06em;
+  color: #d8dee6;
+  background: rgba(11, 13, 16, 0.8);
+  border: 1px solid #3a4150;
+  border-radius: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+#open-inspector:hover {
+  border-color: #8fa3bf;
+  color: #ffffff;
+}
