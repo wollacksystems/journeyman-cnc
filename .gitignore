@@ -1,0 +1,16 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Full-resolution renders (large local artifacts; smoke fixtures are committed)
+renders/
+
+# Environment / secrets
+.env
+.env.*
+
+# Editor / OS
+.DS_Store
+Thumbs.db
