@@ -91,9 +91,15 @@ export const sensorTripScenario: ScenarioDef = {
       t: 1,
       text: "X axis dropped into overtravel on a warm start. I check the guard-door proximity switch first.",
     },
-    { t: 4.5, text: "There it is. Dust bridged across the sensor, so the controller reads the axis at its limit." },
+    {
+      t: 4.5,
+      text: "There it is. Dust bridged across the sensor, so the controller reads the axis at its limit.",
+    },
     { t: 7.5, text: "A rag is enough. Wipe it clean, bracket square to the door." },
-    { t: 12.5, text: "Back off and re-home. Watch the stack kick amber to green the moment the door reads clear." },
+    {
+      t: 12.5,
+      text: "Back off and re-home. Watch the stack kick amber to green the moment the door reads clear.",
+    },
     { t: 16, text: "Alarm's clear. Same cause every few months. Clean it, don't replace it." },
   ],
   lesson: {

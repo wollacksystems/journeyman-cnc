@@ -59,13 +59,19 @@ export function driveScenario(def: ScenarioDef, t: number): ScenarioState {
   }
 
   const leanBase = motion.lean ?? 0;
-  const lean = motion.pose === "wipe" ? leanBase * easeTriangle(progress, 0.28, 0.28) : leanBase * easeTriangle(progress, 0.3, 0.35);
+  const lean =
+    motion.pose === "wipe"
+      ? leanBase * easeTriangle(progress, 0.28, 0.28)
+      : leanBase * easeTriangle(progress, 0.3, 0.35);
 
   const wiping = motion.pose === "wipe";
   let reach = motion.reach ?? null;
   if (wiping && reach) {
     const sweep = Math.sin(progress * Math.PI * 3) * 0.28;
-    reach = { hand: reach.hand, target: [reach.target[0] + sweep, reach.target[1], reach.target[2]] };
+    reach = {
+      hand: reach.hand,
+      target: [reach.target[0] + sweep, reach.target[1], reach.target[2]],
+    };
   }
 
   const lookAt = motion.look ?? (reach ? reach.target : [0, 1.3, -1]);

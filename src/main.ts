@@ -198,7 +198,9 @@ if (import.meta.env.DEV) {
     renderer.setAnimationLoop(null); // batch drives its own frames; don't compete with the live canvas
     try {
       const totalFrames = Math.round(scenario.durationSec * scenario.fps);
-      statusFor(`encoding ${scenario.cameras.length} cameras x ${totalFrames} frames (${CAPTURE_WIDTH}x${CAPTURE_HEIGHT})`);
+      statusFor(
+        `encoding ${scenario.cameras.length} cameras x ${totalFrames} frames (${CAPTURE_WIDTH}x${CAPTURE_HEIGHT})`,
+      );
       const startedUtc = new Date().toISOString();
       const result = await captureBatch({
         scenario,
@@ -215,7 +217,13 @@ if (import.meta.env.DEV) {
       for (const clip of result.clips) {
         downloadBlob(clip.blob, `renders/${scenario.id}/${clip.camera}.mp4`);
       }
-      const manifest = buildCaptureManifest(scenario, rig, CAPTURE_WIDTH, CAPTURE_HEIGHT, startedUtc);
+      const manifest = buildCaptureManifest(
+        scenario,
+        rig,
+        CAPTURE_WIDTH,
+        CAPTURE_HEIGHT,
+        startedUtc,
+      );
       downloadBlob(
         new Blob([JSON.stringify(manifest, null, 2)], { type: "application/json" }),
         `renders/${scenario.id}/manifest.json`,

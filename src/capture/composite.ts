@@ -6,7 +6,9 @@ function pickWebMMime(): string {
   return candidates.find((c) => MediaRecorder.isTypeSupported(c)) ?? "video/webm";
 }
 
-type CapturableCanvas = HTMLCanvasElement & { captureStream?: (frameRequestRate?: number) => MediaStream };
+type CapturableCanvas = HTMLCanvasElement & {
+  captureStream?: (frameRequestRate?: number) => MediaStream;
+};
 
 /**
  * Real-time composite recording of the on-screen 6-viewport rig via

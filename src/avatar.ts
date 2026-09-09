@@ -57,7 +57,11 @@ function armChain(torso: THREE.Object3D, side: 1 | -1): Arm {
   const root = new THREE.Group();
   root.name = side === 1 ? "arm-left" : "arm-right";
 
-  const upper = hangingCylinder(new THREE.CylinderGeometry(0.055, 0.05, ARM_UPPER, 12), armMaterial, ARM_UPPER);
+  const upper = hangingCylinder(
+    new THREE.CylinderGeometry(0.055, 0.05, ARM_UPPER, 12),
+    armMaterial,
+    ARM_UPPER,
+  );
   root.add(upper);
 
   const elbow = new THREE.Group();
@@ -95,8 +99,14 @@ function armChain(torso: THREE.Object3D, side: 1 | -1): Arm {
     let cosThetaS = 1;
     let bend = 0;
     if (clamped > 1e-5) {
-      cosThetaS = Math.max(-1, Math.min(1, (L1 * L1 + clamped * clamped - L2 * L2) / (2 * L1 * clamped)));
-      const cosBend = Math.max(-1, Math.min(1, (L1 * L1 + L2 * L2 - clamped * clamped) / (2 * L1 * L2)));
+      cosThetaS = Math.max(
+        -1,
+        Math.min(1, (L1 * L1 + clamped * clamped - L2 * L2) / (2 * L1 * clamped)),
+      );
+      const cosBend = Math.max(
+        -1,
+        Math.min(1, (L1 * L1 + L2 * L2 - clamped * clamped) / (2 * L1 * L2)),
+      );
       bend = Math.PI - Math.acos(cosBend);
     }
     const thetaS = Math.acos(cosThetaS);
@@ -105,10 +115,7 @@ function armChain(torso: THREE.Object3D, side: 1 | -1): Arm {
     if (n.lengthSq() < 1e-8) n.set(1, 0, 0);
     n.normalize();
 
-    const upPerp = new THREE.Vector3()
-      .copy(up)
-      .addScaledVector(along, -up.dot(along))
-      .normalize();
+    const upPerp = new THREE.Vector3().copy(up).addScaledVector(along, -up.dot(along)).normalize();
     const chainDir = new THREE.Vector3()
       .copy(along)
       .multiplyScalar(Math.cos(thetaS))
