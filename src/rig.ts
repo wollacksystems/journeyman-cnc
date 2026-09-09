@@ -115,4 +115,32 @@ export class CameraRig {
     }
     renderer.setScissorTest(false);
   }
+
+  /**
+   * Render a single camera full-frame into the renderer's drawing buffer
+   * (aspect matched to the given pixel size). Used by the batch capture
+   * pipeline to produce one dedicated canvas stream per production camera.
+   */
+  renderCamera(
+    renderer: THREE.WebGLRenderer,
+    scene: THREE.Scene,
+    avatarBody: THREE.Object3D,
+    id: CameraId,
+    width: number,
+    height: number,
+  ): void {
+    const vp = this.viewports.find((v) => v.id === id);
+    if (!vp) throw new Error(`viewport ${id} missing`);
+    const prevAspect = vp.camera.aspect;
+    vp.camera.aspect = width / height;
+    vp.camera.updateProjectionMatrix();
+    renderer.setViewport(0, 0, width, height);
+    renderer.setScissor(0, 0, width, height);
+    renderer.setScissorTest(true);
+    avatarBody.visible = !vp.firstPerson;
+    renderer.render(scene, vp.camera);
+    renderer.setScissorTest(false);
+    vp.camera.aspect = prevAspect;
+    vp.camera.updateProjectionMatrix();
+  }
 }

@@ -2,8 +2,9 @@ import * as THREE from "three";
 
 /**
  * CNC cell built from primitives: floor, enclosure walls, a VMC-style machine
- * (column, saddle, spindle head), a worktable, and a safety-light indicator
- * stack the scenarios will drive. No physics — everything is kinematic.
+ * (column, saddle, spindle head), a worktable, a safety-light indicator stack,
+ * and a guard-door proximity/interlock sensor the scenarios drive. No physics
+ * - everything is kinematic.
  */
 export interface MachineCell {
   root: THREE.Group;
@@ -13,6 +14,13 @@ export interface MachineCell {
   spindle: THREE.Group;
   /** Tool changer pod (ATC) the jam scenario targets. */
   atc: THREE.Group;
+  /** Guard door panel + wafer-style proximity sensor the sensor-trip scenario targets. */
+  guardSensor: {
+    panel: THREE.Mesh;
+    head: THREE.Mesh;
+    /** Dust blob around the sensor face (visible/proportional to contamination). */
+    dust: THREE.Mesh;
+  };
 }
 
 const steel = new THREE.MeshStandardMaterial({ color: 0x6b7280, roughness: 0.55, metalness: 0.35 });
@@ -75,7 +83,11 @@ export function createMachineCell(): MachineCell {
 
   // Worktable with a raw stock block (the part being machined).
   const table = box(1.8, 0.12, 1.2, tableMat, 0, 1.02, 0.2);
-  const stock = box(0.5, 0.3, 0.5, new THREE.MeshStandardMaterial({ color: 0xb5915a, roughness: 0.65, metalness: 0.2 }), 0, 1.23, 0.2);
+  const stock = box(
+    0.5, 0.3, 0.5,
+    new THREE.MeshStandardMaterial({ color: 0xb5915a, roughness: 0.65, metalness: 0.2 }),
+    0, 1.23, 0.2,
+  );
   machine.add(table, stock);
 
   // ATC pod: umbrella-style tool carousel beside the column.
@@ -91,6 +103,26 @@ export function createMachineCell(): MachineCell {
     atc.add(pocket);
   }
 
+  // Guard door panel with a proximity/interlock sensor on the machine front
+  // (local z 0 ~ world z 0 range, waist high so the expert can wipe it).
+  const guardPanel = box(0.06, 1.8, 1.1, steel, 0.35, 0.9, 1.6);
+  const guardFrame = box(0.26, 1.8, 0.08, darkSteel, 0.47, 0.9, 1.34);
+  machine.add(guardPanel, guardFrame);
+
+  const sensorHead = cyl(0.035, 0.035, 0.09, darkSteel, 0.35, 1.06, 1.83);
+  const sensorFace = cyl(
+    0.028, 0.028, 0.012,
+    new THREE.MeshStandardMaterial({ color: 0x1f2430, emissive: 0x000000 }),
+    0.35, 1.06, 1.883,
+  );
+  const dust = new THREE.Mesh(
+    new THREE.SphereGeometry(0.05, 16, 12),
+    new THREE.MeshBasicMaterial({ color: 0x9aa4b0, transparent: true, opacity: 0, depthWrite: false }),
+  );
+  dust.position.set(0.35, 1.06, 1.945);
+  dust.name = "sensor-dust";
+  machine.add(sensorHead, sensorFace, dust);
+
   // Signal stack on the enclosure wall (scenario-driven).
   const signalStack = {
     red: cyl(0.06, 0.06, 0.16, new THREE.MeshStandardMaterial({ color: 0x7f1d1d, emissive: 0x000000 }), -4.6, 2.6, -4.3),
@@ -100,7 +132,13 @@ export function createMachineCell(): MachineCell {
 
   root.add(machine, atc, signalStack.red, signalStack.amber, signalStack.green);
 
-  return { root, signalStack, spindle, atc };
+  return {
+    root,
+    signalStack,
+    spindle,
+    atc,
+    guardSensor: { panel: guardPanel, head: sensorFace, dust },
+  };
 }
 
 /** Set the indicator stack lights (0..1 intensity each). */
@@ -114,4 +152,16 @@ export function setSignalLights(stack: MachineCell["signalStack"], red: number, 
   apply(stack.red, red, 0x7f1d1d, 0xff2020);
   apply(stack.amber, amber, 0x92400e, 0xffb020);
   apply(stack.green, green, 0x14532d, 0x30ff50);
+}
+
+/** Drive the guard-door sensor dust 0..1 (0 = clean/wiped). */
+export function setSensorDust(cell: MachineCell, amount: number): void {
+  const dust = cell.guardSensor.dust;
+  const clamped = Math.max(0, Math.min(1, amount));
+  dust.visible = clamped > 0.02;
+  const mat = dust.material as THREE.MeshBasicMaterial;
+  mat.opacity = clamped;
+  const s = 0.5 + clamped * 0.9;
+  dust.scale.set(s, s, s);
+  (cell.guardSensor.head.material as THREE.MeshStandardMaterial).emissiveIntensity = clamped * 2;
 }

@@ -7,6 +7,9 @@ dist/
 # Full-resolution renders (large local artifacts; smoke fixtures are committed)
 renders/
 
+# Smoke test artifacts (screenshots + logs)
+scripts/smoke-artifacts/
+
 # Environment / secrets
 .env
 .env.*
