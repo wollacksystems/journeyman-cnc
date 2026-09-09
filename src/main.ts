@@ -2,18 +2,26 @@ import * as THREE from "three";
 import "./style.css";
 import { FrameClock } from "./clock";
 import { createAvatar, type Avatar } from "./avatar";
-import { createMachineCell, setSignalLights, type MachineCell } from "./cell";
+import { createMachineCell, type MachineCell } from "./cell";
 import { CameraRig, VIEWPORT_GRID, type CameraId } from "./rig";
 import { startInspectorHub } from "./inspector";
+import { sensorTripScenario } from "./scenario/sensor-trip";
+import { validateScenario } from "./scenario/types";
+import { driveScenario } from "./scenario/drive";
+import { applyScenario } from "./sim/apply";
+import { captureBatch, downloadBlob, CAPTURE_HEIGHT, CAPTURE_WIDTH } from "./capture/batch";
+import { recordComposite } from "./capture/composite";
+import { buildCaptureManifest } from "./manifest";
 
 const FPS = 30;
 
-// Scripted beats (Phase 3 will replace these with a scenario script):
-// 0–4s idle at the cell entrance, 4–12s walk up to the machine.
-const WALK_START = 4;
-const WALK_END = 12;
-const WALK_FROM_Z = 3.2;
-const WALK_TO_Z = 1.35;
+// Phase 2 drives the first scenario end to end; later phases swap in more
+// definitions from a scenario registry.
+const scenario = sensorTripScenario;
+const scenarioProblems = validateScenario(scenario);
+if (scenarioProblems.length > 0) {
+  throw new Error(`Scenario validation failed: ${scenarioProblems.join("; ")}`);
+}
 
 const canvas = document.querySelector<HTMLCanvasElement>("#rig");
 if (!canvas) throw new Error("#rig canvas missing");
@@ -73,37 +81,12 @@ chestCam.position.set(0, -0.35, 0.18);
 chestCam.rotation.set(-0.25, 0, 0);
 avatar.face.add(headCam, chestCam);
 
-/** Scripted walk position — a pure function of simulation time. */
-function walkZ(t: number): number {
-  if (t <= WALK_START) return WALK_FROM_Z;
-  if (t >= WALK_END) return WALK_TO_Z;
-  const k = (t - WALK_START) / (WALK_END - WALK_START);
-  const e = k * k * (3 - 2 * k); // smoothstep
-  return WALK_FROM_Z + (WALK_TO_Z - WALK_FROM_Z) * e;
-}
-
-function updateAvatar(t: number): void {
-  avatar.root.position.set(0, 0, walkZ(t));
-  avatar.face.rotation.y = 0; // cameras look down local -Z = world -Z, toward the machine
-  const walking = t > WALK_START && t < WALK_END;
-  avatar.body.rotation.x = walking ? Math.sin(t * 7) * 0.03 : 0;
-  avatar.body.position.y = walking ? Math.abs(Math.sin(t * 7)) * 0.02 : 0;
-}
-
-function updateCell(t: number): void {
-  cell.spindle.rotation.y = t * 0.6;
-  const walking = t > WALK_START && t < WALK_END;
-  setSignalLights(
-    cell.signalStack,
-    0,
-    walking ? 0.5 + 0.5 * Math.sin(t * Math.PI * 2) : 0,
-    walking ? 0 : 0.85,
-  );
-}
-
 const inspectorHub = startInspectorHub();
 const snapshotViewports = rig.viewports.map((v) => ({ id: v.id, label: v.label }));
 const clock = new FrameClock(FPS);
+
+// Synthetic camera mount offset for the first-person cams stays put while
+// the face pivot aims, so the rig feed reads like a wearable camera.
 
 function resize(): void {
   const w = window.innerWidth;
@@ -113,6 +96,22 @@ function resize(): void {
 }
 window.addEventListener("resize", resize);
 resize();
+
+function frameLoop(): void {
+  const state = clock.tick();
+  if (state) {
+    applyScenario(driveScenario(scenario, state.t), avatar, cell);
+    rig.update(state.t, avatar.root);
+    inspectorHub.publish({
+      frame: state.frame,
+      t: state.t,
+      fps: clock.fps,
+      viewports: snapshotViewports,
+    });
+  }
+  rig.renderAll(renderer, scene, avatar.body);
+}
+renderer.setAnimationLoop(frameLoop);
 
 if (import.meta.env.DEV) {
   // Composite overlay labels matching the 3x2 viewport grid.
@@ -139,20 +138,95 @@ if (import.meta.env.DEV) {
     );
   });
   document.body.appendChild(openBtn);
-}
 
-renderer.setAnimationLoop(() => {
-  const state = clock.tick();
-  if (state) {
-    updateAvatar(state.t);
-    updateCell(state.t);
-    rig.update(state.t, avatar.root);
-    inspectorHub.publish({
-      frame: state.frame,
-      t: state.t,
-      fps: clock.fps,
-      viewports: snapshotViewports,
-    });
+  // Capture toolbar: real-time composite + deterministic MP4 corpus.
+  const status = document.createElement("div");
+  status.id = "capture-status";
+  status.textContent = "idle";
+  document.body.appendChild(status);
+
+  const toolbar = document.createElement("div");
+  toolbar.id = "capture-toolbar";
+
+  const recBtn = document.createElement("button");
+  recBtn.textContent = "REC COMPOSITE";
+  recBtn.addEventListener("click", () => {
+    void compositeFlow();
+  });
+
+  const corpusBtn = document.createElement("button");
+  corpusBtn.textContent = "RENDER CORPUS";
+  corpusBtn.addEventListener("click", () => {
+    void batchFlow();
+  });
+
+  toolbar.append(recBtn, corpusBtn);
+  document.body.appendChild(toolbar);
+
+  let busy = false;
+  const setBusy = (value: boolean): void => {
+    busy = value;
+    recBtn.disabled = value;
+    corpusBtn.disabled = value;
+  };
+  const statusFor = (text: string): void => {
+    status.textContent = text;
+  };
+
+  async function compositeFlow(): Promise<void> {
+    if (busy) return;
+    setBusy(true);
+    try {
+      clock.reset(); // wall-clock composite runs a fresh 0..duration loop
+      statusFor("recording composite...");
+      const blob = await recordComposite(renderer, scenario.durationSec, FPS, (t) => {
+        statusFor(`recording composite ${t.toFixed(1)}s`);
+      });
+      downloadBlob(blob, `renders/${scenario.id}/composite.webm`);
+      statusFor(`saved renders/${scenario.id}/composite.webm`);
+    } catch (error) {
+      console.error(error);
+      statusFor(`composite failed: ${String(error)}`);
+    } finally {
+      setBusy(false);
+    }
   }
-  rig.renderAll(renderer, scene, avatar.body);
-});
+
+  async function batchFlow(): Promise<void> {
+    if (busy) return;
+    setBusy(true);
+    renderer.setAnimationLoop(null); // batch drives its own frames; don't compete with the live canvas
+    try {
+      const totalFrames = Math.round(scenario.durationSec * scenario.fps);
+      statusFor(`encoding ${scenario.cameras.length} cameras x ${totalFrames} frames (${CAPTURE_WIDTH}x${CAPTURE_HEIGHT})`);
+      const startedUtc = new Date().toISOString();
+      const result = await captureBatch({
+        scenario,
+        rig,
+        scene,
+        avatar,
+        cell,
+        onProgress: (p) => {
+          statusFor(
+            `${p.camera} ${p.frame}/${p.totalFrames} (camera ${p.cameraIndex + 1}/${p.cameraTotal})`,
+          );
+        },
+      });
+      for (const clip of result.clips) {
+        downloadBlob(clip.blob, `renders/${scenario.id}/${clip.camera}.mp4`);
+      }
+      const manifest = buildCaptureManifest(scenario, rig, CAPTURE_WIDTH, CAPTURE_HEIGHT, startedUtc);
+      downloadBlob(
+        new Blob([JSON.stringify(manifest, null, 2)], { type: "application/json" }),
+        `renders/${scenario.id}/manifest.json`,
+      );
+      statusFor(`saved renders/${scenario.id}/: ${result.clips.length} clips + manifest`);
+    } catch (error) {
+      console.error(error);
+      statusFor(`batch failed: ${String(error)}`);
+    } finally {
+      renderer.setAnimationLoop(frameLoop);
+      setBusy(false);
+    }
+  }
+}

@@ -50,3 +50,48 @@ body {
   border-color: #8fa3bf;
   color: #ffffff;
 }
+
+/* Dev-only capture toolbar + status overlay. */
+#capture-toolbar {
+  position: fixed;
+  left: 10px;
+  bottom: 10px;
+  z-index: 20;
+  display: flex;
+  gap: 6px;
+}
+
+#capture-toolbar button {
+  font: 600 11px ui-monospace, "Cascadia Mono", Consolas, monospace;
+  letter-spacing: 0.06em;
+  color: #d8dee6;
+  background: rgba(11, 13, 16, 0.8);
+  border: 1px solid #3a4150;
+  border-radius: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+#capture-toolbar button:hover:not(:disabled) {
+  border-color: #8fa3bf;
+  color: #ffffff;
+}
+
+#capture-toolbar button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+#capture-status {
+  position: fixed;
+  left: 10px;
+  bottom: 46px;
+  z-index: 20;
+  font: 600 11px ui-monospace, "Cascadia Mono", Consolas, monospace;
+  letter-spacing: 0.06em;
+  color: #8fa3bf;
+  background: rgba(11, 13, 16, 0.8);
+  border: 1px solid #3a4150;
+  border-radius: 6px;
+  padding: 4px 10px;
+}
