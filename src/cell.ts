@@ -24,10 +24,26 @@ export interface MachineCell {
 }
 
 const steel = new THREE.MeshStandardMaterial({ color: 0x6b7280, roughness: 0.55, metalness: 0.35 });
-const darkSteel = new THREE.MeshStandardMaterial({ color: 0x374151, roughness: 0.6, metalness: 0.4 });
-const tableMat = new THREE.MeshStandardMaterial({ color: 0x9ca3af, roughness: 0.4, metalness: 0.55 });
+const darkSteel = new THREE.MeshStandardMaterial({
+  color: 0x374151,
+  roughness: 0.6,
+  metalness: 0.4,
+});
+const tableMat = new THREE.MeshStandardMaterial({
+  color: 0x9ca3af,
+  roughness: 0.4,
+  metalness: 0.55,
+});
 
-function box(w: number, h: number, d: number, mat: THREE.Material, x = 0, y = 0, z = 0): THREE.Mesh {
+function box(
+  w: number,
+  h: number,
+  d: number,
+  mat: THREE.Material,
+  x = 0,
+  y = 0,
+  z = 0,
+): THREE.Mesh {
   const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
   m.position.set(x, y, z);
   m.castShadow = true;
@@ -35,7 +51,15 @@ function box(w: number, h: number, d: number, mat: THREE.Material, x = 0, y = 0,
   return m;
 }
 
-function cyl(rTop: number, rBottom: number, h: number, mat: THREE.Material, x = 0, y = 0, z = 0): THREE.Mesh {
+function cyl(
+  rTop: number,
+  rBottom: number,
+  h: number,
+  mat: THREE.Material,
+  x = 0,
+  y = 0,
+  z = 0,
+): THREE.Mesh {
   const m = new THREE.Mesh(new THREE.CylinderGeometry(rTop, rBottom, h, 24), mat);
   m.position.set(x, y, z);
   m.castShadow = true;
@@ -84,9 +108,13 @@ export function createMachineCell(): MachineCell {
   // Worktable with a raw stock block (the part being machined).
   const table = box(1.8, 0.12, 1.2, tableMat, 0, 1.02, 0.2);
   const stock = box(
-    0.5, 0.3, 0.5,
+    0.5,
+    0.3,
+    0.5,
     new THREE.MeshStandardMaterial({ color: 0xb5915a, roughness: 0.65, metalness: 0.2 }),
-    0, 1.23, 0.2,
+    0,
+    1.23,
+    0.2,
   );
   machine.add(table, stock);
 
@@ -111,13 +139,22 @@ export function createMachineCell(): MachineCell {
 
   const sensorHead = cyl(0.035, 0.035, 0.09, darkSteel, 0.35, 1.06, 1.83);
   const sensorFace = cyl(
-    0.028, 0.028, 0.012,
+    0.028,
+    0.028,
+    0.012,
     new THREE.MeshStandardMaterial({ color: 0x1f2430, emissive: 0x000000 }),
-    0.35, 1.06, 1.883,
+    0.35,
+    1.06,
+    1.883,
   );
   const dust = new THREE.Mesh(
     new THREE.SphereGeometry(0.05, 16, 12),
-    new THREE.MeshBasicMaterial({ color: 0x9aa4b0, transparent: true, opacity: 0, depthWrite: false }),
+    new THREE.MeshBasicMaterial({
+      color: 0x9aa4b0,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+    }),
   );
   dust.position.set(0.35, 1.06, 1.945);
   dust.name = "sensor-dust";
@@ -125,9 +162,33 @@ export function createMachineCell(): MachineCell {
 
   // Signal stack on the enclosure wall (scenario-driven).
   const signalStack = {
-    red: cyl(0.06, 0.06, 0.16, new THREE.MeshStandardMaterial({ color: 0x7f1d1d, emissive: 0x000000 }), -4.6, 2.6, -4.3),
-    amber: cyl(0.06, 0.06, 0.16, new THREE.MeshStandardMaterial({ color: 0x92400e, emissive: 0x000000 }), -4.6, 2.42, -4.3),
-    green: cyl(0.06, 0.06, 0.16, new THREE.MeshStandardMaterial({ color: 0x14532d, emissive: 0x000000 }), -4.6, 2.24, -4.3),
+    red: cyl(
+      0.06,
+      0.06,
+      0.16,
+      new THREE.MeshStandardMaterial({ color: 0x7f1d1d, emissive: 0x000000 }),
+      -4.6,
+      2.6,
+      -4.3,
+    ),
+    amber: cyl(
+      0.06,
+      0.06,
+      0.16,
+      new THREE.MeshStandardMaterial({ color: 0x92400e, emissive: 0x000000 }),
+      -4.6,
+      2.42,
+      -4.3,
+    ),
+    green: cyl(
+      0.06,
+      0.06,
+      0.16,
+      new THREE.MeshStandardMaterial({ color: 0x14532d, emissive: 0x000000 }),
+      -4.6,
+      2.24,
+      -4.3,
+    ),
   };
 
   root.add(machine, atc, signalStack.red, signalStack.amber, signalStack.green);
@@ -142,7 +203,12 @@ export function createMachineCell(): MachineCell {
 }
 
 /** Set the indicator stack lights (0..1 intensity each). */
-export function setSignalLights(stack: MachineCell["signalStack"], red: number, amber: number, green: number): void {
+export function setSignalLights(
+  stack: MachineCell["signalStack"],
+  red: number,
+  amber: number,
+  green: number,
+): void {
   const apply = (mesh: THREE.Mesh, intensity: number, base: number, lit: number) => {
     const mat = mesh.material as THREE.MeshStandardMaterial;
     mat.emissive.setHex(intensity > 0 ? lit : 0x000000);

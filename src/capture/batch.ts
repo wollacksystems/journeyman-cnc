@@ -36,7 +36,12 @@ export interface BatchResult {
   clips: Array<{ camera: CameraId; blob: Blob }>;
 }
 
-function renderFrameAt(options: BatchOptions, cameraId: CameraId, t: number, renderer: THREE.WebGLRenderer): void {
+function renderFrameAt(
+  options: BatchOptions,
+  cameraId: CameraId,
+  t: number,
+  renderer: THREE.WebGLRenderer,
+): void {
   const { scenario, rig, scene, avatar, cell } = options;
   const w = options.width ?? CAPTURE_WIDTH;
   const h = options.height ?? CAPTURE_HEIGHT;
@@ -101,7 +106,13 @@ export async function captureBatch(options: BatchOptions): Promise<BatchResult> 
       const t = f / fps;
       renderFrameAt(options, cameraId, t, renderer);
       await source.add(t, 1 / fps);
-      options.onProgress?.({ camera: cameraId, frame: f + 1, totalFrames, cameraIndex: ci, cameraTotal });
+      options.onProgress?.({
+        camera: cameraId,
+        frame: f + 1,
+        totalFrames,
+        cameraIndex: ci,
+        cameraTotal,
+      });
     }
 
     source.close();

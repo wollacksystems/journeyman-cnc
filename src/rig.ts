@@ -16,13 +16,7 @@ import * as THREE from "three";
  */
 export const VIEWPORT_GRID = { cols: 3, rows: 2 } as const;
 
-export type CameraId =
-  | "side-a"
-  | "side-b"
-  | "head"
-  | "chest"
-  | "debug-orbit"
-  | "debug-follow";
+export type CameraId = "side-a" | "side-b" | "head" | "chest" | "debug-orbit" | "debug-follow";
 
 export interface Viewport {
   readonly id: CameraId;
@@ -66,7 +60,13 @@ export class CameraRig {
       { id: "head", label: "HEAD", camera: head, cell: [2, 0], firstPerson: true },
       { id: "chest", label: "CHEST", camera: chest, cell: [0, 1], firstPerson: true },
       { id: "debug-orbit", label: "DEBUG ORBIT", camera: orbit, cell: [1, 1], firstPerson: false },
-      { id: "debug-follow", label: "DEBUG FOLLOW", camera: follow, cell: [2, 1], firstPerson: false },
+      {
+        id: "debug-follow",
+        label: "DEBUG FOLLOW",
+        camera: follow,
+        cell: [2, 1],
+        firstPerson: false,
+      },
     ];
   }
 

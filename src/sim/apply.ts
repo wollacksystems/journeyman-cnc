@@ -46,6 +46,11 @@ export function applyScenario(state: ScenarioState, avatar: Avatar, cell: Machin
 
   // Cell state.
   setSensorDust(cell, state.cell.dust);
-  setSignalLights(cell.signalStack, state.cell.signal.red, state.cell.signal.amber, state.cell.signal.green);
+  setSignalLights(
+    cell.signalStack,
+    state.cell.signal.red,
+    state.cell.signal.amber,
+    state.cell.signal.green,
+  );
   cell.spindle.rotation.y = t * 0.6;
 }

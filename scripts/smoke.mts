@@ -32,7 +32,7 @@ const HARD_TIMEOUT_MS = Number(process.env.SMOKE_TIMEOUT_MS ?? 2_400_000);
 const STALL_MS = Number(process.env.SMOKE_STALL_MS ?? 240_000);
 const ARTIFACTS = join("scripts", "smoke-artifacts");
 
-let log: string[] = [];
+const log: string[] = [];
 
 function say(line: string): void {
   const ts = new Date().toISOString().slice(11, 19);
@@ -240,14 +240,12 @@ async function main(): Promise<boolean> {
     }
   }
 
-  let ok = false;
   try {
-    ok = await runCaptureFlow(browser);
+    return await runCaptureFlow(browser);
   } finally {
     await browser.close().catch(() => {});
     if (child && child.exitCode === null) child.kill();
   }
-  return ok;
 }
 
 main()

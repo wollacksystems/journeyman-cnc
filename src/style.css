@@ -23,7 +23,11 @@ body {
 
 .vp-label {
   position: absolute;
-  font: 600 11px ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font:
+    600 11px ui-monospace,
+    "Cascadia Mono",
+    Consolas,
+    monospace;
   letter-spacing: 0.08em;
   color: #e5edf5;
   background: rgba(11, 13, 16, 0.72);
@@ -36,7 +40,11 @@ body {
   right: 10px;
   bottom: 10px;
   z-index: 20;
-  font: 600 11px ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font:
+    600 11px ui-monospace,
+    "Cascadia Mono",
+    Consolas,
+    monospace;
   letter-spacing: 0.06em;
   color: #d8dee6;
   background: rgba(11, 13, 16, 0.8);
@@ -62,7 +70,11 @@ body {
 }
 
 #capture-toolbar button {
-  font: 600 11px ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font:
+    600 11px ui-monospace,
+    "Cascadia Mono",
+    Consolas,
+    monospace;
   letter-spacing: 0.06em;
   color: #d8dee6;
   background: rgba(11, 13, 16, 0.8);
@@ -87,7 +99,11 @@ body {
   left: 10px;
   bottom: 46px;
   z-index: 20;
-  font: 600 11px ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font:
+    600 11px ui-monospace,
+    "Cascadia Mono",
+    Consolas,
+    monospace;
   letter-spacing: 0.06em;
   color: #8fa3bf;
   background: rgba(11, 13, 16, 0.8);
