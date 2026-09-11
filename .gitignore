@@ -10,6 +10,9 @@ renders/
 # Smoke test artifacts (screenshots + logs)
 scripts/smoke-artifacts/
 
+# Bundled verification harness (built from scripts/verify-cam-rig.mts)
+scripts/verify-cam-rig.bundle.mjs
+
 # Environment / secrets
 .env
 .env.*

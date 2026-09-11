@@ -11,6 +11,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit",
+    "verify:rig": "esbuild scripts/verify-cam-rig.mts --bundle --platform=node --format=esm --external:three --outfile=scripts/verify-cam-rig.bundle.mjs --log-level=warning && node scripts/verify-cam-rig.bundle.mjs && rm scripts/verify-cam-rig.bundle.mjs",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "smoke": "node scripts/smoke.mts"

@@ -3,8 +3,9 @@ import * as THREE from "three";
 /**
  * Primitive-first avatar: capsule torso, box head, cylinder limbs.
  * The body group is hidden per-camera by the rig on first-person viewports
- * (see CameraRig.renderCamera / renderAll); cameras mount to `face`, which
- * tracks root orientation without inheriting body visibility.
+ * (see CameraRig.renderCamera / renderAll); first-person cameras mount to
+ * `face`/`chestFace` under the body pivots, so they ride torso lean and gait
+ * bob rigidly while still inheriting the look-target aim.
  *
  * Arms are two-bone chains (shoulder -> elbow -> hand) solved with analytic
  * inverse kinematics so scenarios can reach/hand targets deterministically
@@ -29,8 +30,12 @@ export interface Avatar {
   body: THREE.Group;
   /** Torso pivot at hip height; forward lean rotates this group. */
   torso: THREE.Group;
-  /** Forward-facing camera mount pivot. */
+  /** Body-mounted camera pivots (children of torso) that ride lean + bob rigidly. */
+  headPivot: THREE.Object3D;
+  chestPivot: THREE.Object3D;
+  /** Look pivots under each body pivot; cams mount here so lookAt aims them. */
   face: THREE.Object3D;
+  chestFace: THREE.Object3D;
   arms: { left: Arm; right: Arm };
 }
 
@@ -181,15 +186,31 @@ export function createAvatar(): Avatar {
   body.add(torso, legL, legR);
   root.add(body);
 
-  // Face pivot: first-person camera mount (head/chest cams are added here by
-  // main.ts).
+  // Body-mounted camera pivots hang off the torso pivot (not body) so both
+  // torso lean and the body's gait sway/bob move the mounts rigidly.
+  const headPivot = new THREE.Object3D();
+  headPivot.name = "avatar-head";
+  headPivot.position.set(0, 0.52, 0);
+  torso.add(headPivot);
+
+  const chestPivot = new THREE.Object3D();
+  chestPivot.name = "avatar-chest";
+  chestPivot.position.set(0, 0.11, 0);
+  torso.add(chestPivot);
+
+  // Look pivots: first-person cams mount here so they ride lean/bob through
+  // the body pivots above and track the look target via lookAt.
   const face = new THREE.Object3D();
   face.name = "avatar-face";
-  face.position.set(0, 1.6, 0);
-  root.add(face);
+  face.position.set(0, 0, 0.1);
+  headPivot.add(face);
+  const chestFace = new THREE.Object3D();
+  chestFace.name = "avatar-face-chest";
+  chestFace.position.set(0, 0, 0.1);
+  chestPivot.add(chestFace);
 
   left.rest();
   right.rest();
 
-  return { root, body, torso, face, arms: { left, right } };
+  return { root, body, torso, face, chestFace, headPivot, chestPivot, arms: { left, right } };
 }
