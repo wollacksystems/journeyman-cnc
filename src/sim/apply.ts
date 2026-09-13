@@ -27,10 +27,13 @@ export function applyScenario(state: ScenarioState, avatar: Avatar, cell: Machin
   // Torso lean (positive lean = forward, toward -Z).
   avatar.torso.rotation.x = -state.avatar.lean * LEAN_GAIN;
 
-  // Face pivot: point local -Z at the look target (cameras are mounted
-  // looking down -Z, so aim +Z then flip 180 degrees).
+  // Aim both look pivots at the scenario target. The first-person cams mount
+  // under these pivots, so each cam rides its body pivot (lean + bob) and
+  // inherits the look aim in one transform chain — no world-plumb divergence.
   avatar.face.lookAt(new THREE.Vector3(...state.avatar.lookAt));
   avatar.face.rotateY(Math.PI);
+  avatar.chestFace.lookAt(new THREE.Vector3(...state.avatar.lookAt));
+  avatar.chestFace.rotateY(Math.PI);
 
   // Arms: the active reach hand solves IK to its target, the other hangs.
   const reach = state.avatar.reach;

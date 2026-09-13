@@ -71,22 +71,25 @@ const viewportById = (id: CameraId): THREE.PerspectiveCamera => {
   return vp.camera;
 };
 
-// Mount the first-person cameras on the avatar's face pivot; the rig hides
-// the body meshes per viewport, so they never occlude their own view.
+// Mount the first-person cameras under the torso-mounted look pivots so they
+// ride torso lean and gait bob rigidly (mounts move with the body) and keep
+// tracking the scenario look target. The body still hides per viewport, so
+// those cams never see their own model.
 const headCam = viewportById("head");
 headCam.position.set(0, 0.02, 0.12);
 headCam.rotation.set(0, 0, 0);
 const chestCam = viewportById("chest");
 chestCam.position.set(0, -0.35, 0.18);
 chestCam.rotation.set(-0.25, 0, 0);
-avatar.face.add(headCam, chestCam);
+avatar.face.add(headCam);
+avatar.chestFace.add(chestCam);
 
 const inspectorHub = startInspectorHub();
 const snapshotViewports = rig.viewports.map((v) => ({ id: v.id, label: v.label }));
 const clock = new FrameClock(FPS);
 
-// Synthetic camera mount offset for the first-person cams stays put while
-// the face pivot aims, so the rig feed reads like a wearable camera.
+// The first-person mounts ride the body (lean + bob) and the look pivots
+// aim them, so the rig feeds read like wearable cameras on a moving torso.
 
 function resize(): void {
   const w = window.innerWidth;
