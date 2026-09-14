@@ -12,6 +12,7 @@ scripts/smoke-artifacts/
 
 # Bundled verification harness (built from scripts/verify-cam-rig.mts)
 scripts/verify-cam-rig.bundle.mjs
+scripts/verify-scenarios.bundle.mjs
 
 # Environment / secrets
 .env

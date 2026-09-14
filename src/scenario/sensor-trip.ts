@@ -1,19 +1,14 @@
 import type { ScenarioDef } from "./types";
 
 /**
- * False overtravel alarm scenario (20 s Phase 2 smoke; Phase 3 stretches the
- * same beats to the locked 45-60 s durations).
- *
- * Story: an expert walks up to a CNC cell after a warm start, finds the X axis
- * dropped into overtravel, locates the guard-door proximity/interlock switch
- * bridged by dust, wipes it clean, re-homes, and confirms the amber-to-green
- * clear on the signal stack.
+ * False overtravel alarm caused by a dust-bridged guard-door sensor.
+ * This is the locked 50 s Phase 3 version used in the corpus.
  */
 export const sensorTripScenario: ScenarioDef = {
   id: "sensor-trip",
   title: "False overtravel alarm: dust-bridged guard-door sensor",
   role: "CNC machinist troubleshooting a false X-axis overtravel alarm",
-  durationSec: 20,
+  durationSec: 50,
   fps: 30,
   cameras: ["side-a", "side-b", "head", "chest"],
   beats: [
@@ -21,7 +16,7 @@ export const sensorTripScenario: ScenarioDef = {
       id: "walk_up",
       label: "Walk up to the cell",
       tStart: 0,
-      tEnd: 4,
+      tEnd: 10,
       cameraHint: "side-a",
       motion: {
         pose: "walk",
@@ -33,8 +28,8 @@ export const sensorTripScenario: ScenarioDef = {
     {
       id: "locate_sensor",
       label: "Locate the guard-door sensor",
-      tStart: 4,
-      tEnd: 8,
+      tStart: 10,
+      tEnd: 20,
       cameraHint: "head",
       motion: {
         pose: "stand",
@@ -46,25 +41,22 @@ export const sensorTripScenario: ScenarioDef = {
     {
       id: "wipe_sensor",
       label: "Step in and wipe the sensor clean",
-      tStart: 8,
-      tEnd: 13,
+      tStart: 20,
+      tEnd: 32,
       cameraHint: "head",
       motion: {
         pose: "wipe",
         standAt: [0.15, 0.72] as const,
         lean: 0.45,
-        reach: {
-          hand: "right",
-          target: [0.42, 1.02, 0.4] as const,
-        },
+        reach: { hand: "right", target: [0.42, 1.02, 0.4] as const },
         look: [0.35, 1.02, 0.2] as const,
       },
     },
     {
       id: "verify_clear",
       label: "Back off and verify the sensor clears",
-      tStart: 13,
-      tEnd: 16,
+      tStart: 32,
+      tEnd: 40,
       cameraHint: "chest",
       motion: {
         pose: "stand",
@@ -76,42 +68,44 @@ export const sensorTripScenario: ScenarioDef = {
     {
       id: "alarm_clear",
       label: "Signal stack confirms amber-to-green",
-      tStart: 16,
-      tEnd: 20,
+      tStart: 40,
+      tEnd: 50,
       cameraHint: "side-a",
-      motion: {
-        pose: "stand",
-        standAt: [0, 0.95] as const,
-        look: [-4.6, 2.5, -4.3] as const,
-      },
+      motion: { pose: "stand", standAt: [0, 0.95] as const, look: [-4.6, 2.5, -4.3] as const },
     },
   ],
   narration: [
     {
-      t: 1,
+      t: 2,
       text: "X axis dropped into overtravel on a warm start. I check the guard-door proximity switch first.",
     },
     {
-      t: 4.5,
+      t: 11,
+      text: "I start with the protective circuit, not the limit switch. Follow the door interlock to the sensor face.",
+    },
+    {
+      t: 18,
       text: "There it is. Dust bridged across the sensor, so the controller reads the axis at its limit.",
     },
-    { t: 7.5, text: "A rag is enough. Wipe it clean, bracket square to the door." },
+    { t: 27, text: "A rag is enough. Wipe it clean and keep the bracket square to the door." },
     {
-      t: 12.5,
-      text: "Back off and re-home. Watch the stack kick amber to green the moment the door reads clear.",
+      t: 37,
+      text: "Back off and re-home. The stack should move from red to amber before the final clear.",
     },
-    { t: 16, text: "Alarm's clear. Same cause every few months. Clean it, don't replace it." },
+    { t: 42, text: "Alarm's clear. Same cause every few months. Clean it, don't replace it." },
   ],
   lesson: {
     title: "A false X-axis overtravel alarm is often a dust-bridged interlock sensor",
     body: "Symptom: the axis drops into overtravel right on a warm start, before any move. Root cause: a protective proximity/interlock switch on the guard door gets bridged by fine dust, so the controller reads the door or axis as at its limit. Fix: check the protective switch before replacing a limit switch; wipe the sensor face clean and confirm the bracket is square to the door. Verify by backing off and re-homing; the signal stack kicks amber to green the moment the door reads clear. Recurring cells see this every few months; include a sensor wipe in preventive maintenance and clean before replace.",
   },
   cell: {
-    dust: { appearsAt: 4, clearedAt: 12.5 },
+    dust: { appearsAt: 10, clearedAt: 35 },
+    wayLube: null,
+    atc: null,
     signals: [
       { tStart: 0, red: 1, amber: 0, green: 0 },
-      { tStart: 12.5, red: 0, amber: 1, green: 0 },
-      { tStart: 14, red: 0, amber: 0, green: 1 },
+      { tStart: 35, red: 0, amber: 1, green: 0 },
+      { tStart: 39, red: 0, amber: 0, green: 1 },
     ],
   },
 };

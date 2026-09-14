@@ -24,6 +24,12 @@ export interface ScenarioState {
   cell: {
     /** Sensor dust contamination 0..1. */
     dust: number;
+    /** Way-lube leak severity 0..1. */
+    wayLube: number;
+    /** ATC carousel jam severity 0..1. */
+    atcJammed: number;
+    /** Deterministic ATC carousel angle. */
+    atcRotation: number;
     signal: { red: number; amber: number; green: number };
   };
 }
@@ -86,6 +92,27 @@ export function driveScenario(def: ScenarioDef, t: number): ScenarioState {
           ? Math.max(0, 1 - (time - dustSpec.clearedAt) / 0.5)
           : 1;
 
+  const wayLubeSpec = def.cell.wayLube;
+  const wayLube =
+    wayLubeSpec === null
+      ? 0
+      : time < wayLubeSpec.appearsAt
+        ? 0
+        : time >= wayLubeSpec.clearedAt
+          ? Math.max(0, 1 - (time - wayLubeSpec.clearedAt) / 1)
+          : Math.min(1, (time - wayLubeSpec.appearsAt) / 2);
+
+  const atcSpec = def.cell.atc;
+  const atcJammed =
+    atcSpec === null
+      ? 0
+      : time < atcSpec.appearsAt
+        ? 0
+        : time >= atcSpec.clearedAt
+          ? Math.max(0, 1 - (time - atcSpec.clearedAt) / 0.75)
+          : 1;
+  const atcRotation = atcJammed > 0.5 ? (atcSpec?.appearsAt ?? 0) * 1.8 : time * 1.8;
+
   let signal = def.cell.signals[def.cell.signals.length - 1];
   for (const s of def.cell.signals) {
     if (time >= s.tStart) signal = s;
@@ -105,6 +132,9 @@ export function driveScenario(def: ScenarioDef, t: number): ScenarioState {
     },
     cell: {
       dust: Math.max(0, Math.min(1, dust)),
+      wayLube: Math.max(0, Math.min(1, wayLube)),
+      atcJammed: Math.max(0, Math.min(1, atcJammed)),
+      atcRotation,
       signal: { red: signal?.red ?? 0, amber: signal?.amber ?? 0, green: signal?.green ?? 0 },
     },
   };

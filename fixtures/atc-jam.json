@@ -1,0 +1,31 @@
+{
+  "scenarioId": "atc-jam",
+  "durationSec": 50,
+  "fps": 30,
+  "cameras": ["side-a", "side-b", "head", "chest"],
+  "beats": [
+    { "id": "walk_up", "tStart": 0, "tEnd": 10, "cameraHint": "side-a" },
+    { "id": "observe_atc", "tStart": 10, "tEnd": 20, "cameraHint": "head" },
+    { "id": "inspect_pocket", "tStart": 20, "tEnd": 32, "cameraHint": "chest" },
+    { "id": "clear_jam", "tStart": 32, "tEnd": 42, "cameraHint": "head" },
+    { "id": "verify_change", "tStart": 42, "tEnd": 50, "cameraHint": "side-b" }
+  ],
+  "narration": [
+    {
+      "t": 2,
+      "text": "The control stopped during a tool change. I am treating this as an ATC index problem until the carousel proves otherwise."
+    },
+    {
+      "t": 23,
+      "text": "A loose tool or chip in the pocket can stop the index. I inspect the pocket and the release path before resetting."
+    },
+    {
+      "t": 44,
+      "text": "The next index completes cleanly. The jam was mechanical interference, not a bad control parameter."
+    }
+  ],
+  "lesson": {
+    "title": "An ATC index jam should be inspected mechanically before repeated resets",
+    "body": "Stop cycling the changer, inspect the active pocket and release path, clear the obstruction safely, reset, and verify one complete tool change."
+  }
+}

@@ -69,6 +69,7 @@ body {
   gap: 6px;
 }
 
+#scenario-select,
 #capture-toolbar button {
   font:
     600 11px ui-monospace,
@@ -81,6 +82,13 @@ body {
   border: 1px solid #3a4150;
   border-radius: 6px;
   padding: 6px 10px;
+}
+
+#scenario-select {
+  padding: 6px 8px;
+}
+
+#capture-toolbar button {
   cursor: pointer;
 }
 

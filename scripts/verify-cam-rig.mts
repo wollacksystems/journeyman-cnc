@@ -36,17 +36,22 @@ function check(name: string, cond: boolean, detail: string): void {
   console.log(`[${tag}] ${name}: ${detail}`);
 }
 
-// applyScenario touches signal lights, sensor dust, and the spindle; those
-// don't affect avatar transforms, so a minimal stub keeps this WebGL-free.
+// applyScenario touches cell materials and transforms; these meshes keep the
+// proof WebGL-free while matching the runtime cell contract.
 function cellStub(): MachineCell {
   const mesh = (): THREE.Mesh =>
-    new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshStandardMaterial());
+    new THREE.Mesh(
+      new THREE.BufferGeometry(),
+      new THREE.MeshStandardMaterial({ emissive: 0x000000 }),
+    );
   return {
     root: new THREE.Group(),
     signalStack: { red: mesh(), amber: mesh(), green: mesh() },
     guardSensor: { panel: mesh(), head: mesh(), dust: mesh() },
     spindle: new THREE.Group(),
-  } as unknown as MachineCell;
+    atc: new THREE.Group(),
+    wayLube: mesh(),
+  };
 }
 
 const avatar = createAvatar();
@@ -71,14 +76,14 @@ function withoutLean(state: ScenarioState): ScenarioState {
   return { ...state, avatar: { ...state.avatar, lean: 0 } };
 }
 
-// 1) Lean: at t=6s the locate_sensor beat holds lean=0.25 (x LEAN_GAIN = 0.225
+// 1) Lean: at t=15s the locate_sensor beat holds lean=0.25 (x LEAN_GAIN = 0.225
 //    rad about the hip). Compare the head mount's world position against the
 //    same instant with lean zeroed. The pivot sits at (y=0.52, z=0.1) in the
 //    torso frame, so the rigid arc predicts an exact displacement of
 //    ~0.119m forward (with a slight rise, since the pivot is nearly above the
 //    hip); a root- or body-mounted cam would not move at all.
 function assertLeanMovesMount(): void {
-  const state = driveScenario(sensorTripScenario, 6.0);
+  const state = driveScenario(sensorTripScenario, 15.0);
   applyState(withoutLean(state));
   const p0 = avatar.face.getWorldPosition(new THREE.Vector3());
   applyState(state);
@@ -125,7 +130,7 @@ function assertBobMovesMount(): void {
 //    and the chest cam (deliberate -0.25 tilt, as in main.ts) must stay a
 //    rigid child of its pivot.
 function assertAimIntact(): void {
-  driveTo(14.5); // verify_clear beat, cameraHint "chest", lean 0.12
+  driveTo(36.5); // verify_clear beat, cameraHint "chest", lean 0.12
   const target = new THREE.Vector3(...(sensorTripScenario.beats[3].motion.look ?? [0, 1.3, -1]));
 
   const headAim = worldForward(avatar.face);

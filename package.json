@@ -12,6 +12,7 @@
     "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit",
     "verify:rig": "esbuild scripts/verify-cam-rig.mts --bundle --platform=node --format=esm --external:three --outfile=scripts/verify-cam-rig.bundle.mjs --log-level=warning && node scripts/verify-cam-rig.bundle.mjs && rm scripts/verify-cam-rig.bundle.mjs",
+    "verify:scenarios": "esbuild scripts/verify-scenarios.mts --bundle --platform=node --format=esm --outfile=scripts/verify-scenarios.bundle.mjs --log-level=warning && node scripts/verify-scenarios.bundle.mjs && rm scripts/verify-scenarios.bundle.mjs",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "smoke": "node scripts/smoke.mts"

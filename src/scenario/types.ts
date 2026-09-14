@@ -69,6 +69,16 @@ export interface SignalState {
   green: number;
 }
 
+export interface ScenarioCell {
+  /** Guard-door sensor dust: appears at A, cleared at B (0 = none). */
+  dust: { appearsAt: number; clearedAt: number } | null;
+  /** Way-lube leak: rises at A and can be wiped at B (0 = none). */
+  wayLube: { appearsAt: number; clearedAt: number } | null;
+  /** ATC carousel jam: freezes the carousel at A and can be cleared at B. */
+  atc: { appearsAt: number; clearedAt: number } | null;
+  signals: readonly SignalState[];
+}
+
 export interface ScenarioDef {
   id: string;
   title: string;
@@ -80,11 +90,7 @@ export interface ScenarioDef {
   beats: readonly ScenarioBeat[];
   narration: readonly NarrationLine[];
   lesson: ScenarioLesson;
-  cell: {
-    /** Guard-door sensor dust: appears at A, cleared at B (0 = none). */
-    dust: { appearsAt: number; clearedAt: number } | null;
-    signals: readonly SignalState[];
-  };
+  cell: ScenarioCell;
 }
 
 /** Active beat by simulation time (offscreen tails to the first/last beat). */

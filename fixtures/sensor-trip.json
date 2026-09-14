@@ -1,0 +1,28 @@
+{
+  "scenarioId": "sensor-trip",
+  "durationSec": 50,
+  "fps": 30,
+  "cameras": ["side-a", "side-b", "head", "chest"],
+  "beats": [
+    { "id": "walk_up", "tStart": 0, "tEnd": 10, "cameraHint": "side-a" },
+    { "id": "locate_sensor", "tStart": 10, "tEnd": 20, "cameraHint": "head" },
+    { "id": "wipe_sensor", "tStart": 20, "tEnd": 32, "cameraHint": "head" },
+    { "id": "verify_clear", "tStart": 32, "tEnd": 40, "cameraHint": "chest" },
+    { "id": "alarm_clear", "tStart": 40, "tEnd": 50, "cameraHint": "side-a" }
+  ],
+  "narration": [
+    {
+      "t": 2,
+      "text": "X axis dropped into overtravel on a warm start. I check the guard-door proximity switch first."
+    },
+    {
+      "t": 18,
+      "text": "There it is. Dust bridged across the sensor, so the controller reads the axis at its limit."
+    },
+    { "t": 42, "text": "Alarm's clear. Same cause every few months. Clean it, don't replace it." }
+  ],
+  "lesson": {
+    "title": "A false X-axis overtravel alarm is often a dust-bridged interlock sensor",
+    "body": "Check the protective switch before replacing a limit switch; wipe the sensor face clean and confirm the bracket is square to the door."
+  }
+}
