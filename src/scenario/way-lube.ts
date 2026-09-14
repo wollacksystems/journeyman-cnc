@@ -48,8 +48,8 @@ export const wayLubeScenario: ScenarioDef = {
         pose: "wipe",
         standAt: [0.2, 0.8] as const,
         lean: 0.38,
-        reach: { hand: "left", target: [-0.45, 1.1, 0.35] as const },
-        look: [-0.5, 1.12, 0.35] as const,
+        reach: { hand: "left", target: [-0.3, 1.0, 0.25] as const },
+        look: [-0.3, 1.0, 0.25] as const,
       },
     },
     {
@@ -62,8 +62,8 @@ export const wayLubeScenario: ScenarioDef = {
         pose: "stand",
         standAt: [0.1, 0.85] as const,
         lean: 0.25,
-        reach: { hand: "right", target: [-0.42, 1.18, 0.25] as const },
-        look: [-0.45, 1.15, 0.3] as const,
+        reach: { hand: "right", target: [-0.3, 1.0, 0.3] as const },
+        look: [-0.3, 1.0, 0.25] as const,
       },
     },
     {

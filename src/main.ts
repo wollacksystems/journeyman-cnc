@@ -61,6 +61,11 @@ scene.add(key);
 const fill = new THREE.DirectionalLight(0x9db4d0, 0.5);
 fill.position.set(-5, 6, -4);
 scene.add(fill);
+// Local fill over the work area so first-person close-ups (mount inside the
+// lean/shadow envelope) keep the sensor/pocket/leak region legible.
+const workLight = new THREE.PointLight(0xfff2e0, 14, 6, 2);
+workLight.position.set(0.4, 2.2, 1.5);
+scene.add(workLight);
 
 const cell: MachineCell = createMachineCell();
 scene.add(cell.root);
@@ -86,10 +91,10 @@ const viewportById = (id: CameraId): THREE.PerspectiveCamera => {
 // tracking the scenario look target. The body still hides per viewport, so
 // those cams never see their own model.
 const headCam = viewportById("head");
-headCam.position.set(0, 0.02, 0.12);
+headCam.position.set(0, 0.02, 0.16);
 headCam.rotation.set(0, 0, 0);
 const chestCam = viewportById("chest");
-chestCam.position.set(0, -0.35, 0.18);
+chestCam.position.set(0, -0.3, 0.32);
 chestCam.rotation.set(-0.25, 0, 0);
 avatar.face.add(headCam);
 avatar.chestFace.add(chestCam);

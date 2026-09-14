@@ -125,7 +125,17 @@ export function createMachineCell(): MachineCell {
   atc.name = "atc";
   atc.position.set(2.1, 0, -1.0);
   const atcBase = cyl(0.5, 0.6, 0.9, darkSteel, 0, 0.45, 0);
-  const atcDisc = cyl(0.55, 0.55, 0.12, steel, 0, 1.05, 0);
+  // Own material instance: setAtcState drives the jam glow on this disc and
+  // must not tint every shared-steel mesh in the cell red.
+  const atcDisc = cyl(
+    0.55,
+    0.55,
+    0.12,
+    new THREE.MeshStandardMaterial({ color: 0x6b7280, roughness: 0.55, metalness: 0.35 }),
+    0,
+    1.05,
+    0,
+  );
   atc.add(atcBase, atcDisc);
   for (let i = 0; i < 8; i++) {
     const a = (i / 8) * Math.PI * 2;
@@ -174,8 +184,11 @@ export function createMachineCell(): MachineCell {
     }),
   );
   wayLube.name = "way-lube-leak";
-  wayLube.position.set(-0.55, 1.12, 0.32);
-  wayLube.scale.set(1.4, 0.35, 0.8);
+  // On the metering junction at the guard-side frame (world ~(-0.3, 1.0, 0.25)):
+  // visible from the side cams and within the avatar's reach envelope, unlike
+  // the machine interior behind the guard door.
+  wayLube.position.set(-0.3, 1.0, 1.85);
+  wayLube.scale.set(1.2, 0.5, 0.6);
   machine.add(wayLube);
 
   // Signal stack on the enclosure wall (scenario-driven).

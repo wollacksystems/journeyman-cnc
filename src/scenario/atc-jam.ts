@@ -46,10 +46,10 @@ export const atcJamScenario: ScenarioDef = {
       cameraHint: "chest",
       motion: {
         pose: "wipe",
-        standAt: [1.2, 0.72] as const,
+        standAt: [1.7, 0.35] as const,
         lean: 0.34,
-        reach: { hand: "right", target: [2.1, 1.28, -0.9] as const },
-        look: [2.1, 1.25, -1] as const,
+        reach: { hand: "right", target: [1.85, 1.26, -0.7] as const },
+        look: [1.9, 1.25, -0.85] as const,
       },
     },
     {
@@ -60,10 +60,10 @@ export const atcJamScenario: ScenarioDef = {
       cameraHint: "head",
       motion: {
         pose: "stand",
-        standAt: [1.05, 0.85] as const,
+        standAt: [1.7, 0.35] as const,
         lean: 0.22,
-        reach: { hand: "left", target: [2.1, 1.3, -0.9] as const },
-        look: [2.1, 1.3, -1] as const,
+        reach: { hand: "left", target: [1.85, 1.26, -0.7] as const },
+        look: [1.9, 1.25, -0.85] as const,
       },
     },
     {
