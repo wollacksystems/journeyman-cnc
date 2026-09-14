@@ -1,6 +1,6 @@
 import { createRng, type Rng } from "./rng";
 import { generateEnvironment, type EnvSpec } from "./environment";
-import { generateScenario, type FactoryScenario } from "./scenario-gen";
+import { generateScenario, TEMPLATE_IDS, type FactoryScenario } from "./scenario-gen";
 
 /**
  * Factory corpus planner.
@@ -10,7 +10,7 @@ import { generateScenario, type FactoryScenario } from "./scenario-gen";
  * per-scenario sub-seed derived from the environment's own RNG stream. Two
  * factory runs with the same root seed yield identical specs end to end.
  */
-export const TEMPLATE_IDS = ["sensor-trip"] as const;
+// Template ids are owned by the scenario generator (single source of truth).
 export type TemplateId = (typeof TEMPLATE_IDS)[number];
 
 export interface FactoryOptions {

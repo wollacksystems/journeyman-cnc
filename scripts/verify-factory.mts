@@ -4,12 +4,13 @@
  * binding that lets templates run in any generated environment.
  */
 import { planFactory } from "../src/factory/plan.ts";
-import { generateScenario } from "../src/factory/scenario-gen.ts";
+import { generateScenario, TEMPLATE_IDS, TEMPLATE_REGISTRY } from "../src/factory/scenario-gen.ts";
 import { generateEnvironment, LOCKED_ENV, toWorld } from "../src/factory/environment.ts";
 import { buildFactoryManifest } from "../src/factory/manifest.ts";
 import { createRng } from "../src/factory/rng.ts";
 import { createMachineCell } from "../src/cell.ts";
 import { CameraRig } from "../src/rig.ts";
+import { driveScenario } from "../src/scenario/drive.ts";
 import { validateScenario } from "../src/scenario/types.ts";
 import { ENGINE_VERSION } from "../src/version.ts";
 
@@ -66,6 +67,29 @@ check(
 );
 check("scenario ids unique", ids.size === planA.jobs.length, `${ids.size} unique ids`);
 
+// 2b. All three failure-mode templates participate and generate validly.
+check(
+  "template registry covers locked failure modes",
+  TEMPLATE_IDS.join(",") === "sensor-trip,way-lube,atc-jam" &&
+    Object.keys(TEMPLATE_REGISTRY).length === 3,
+  TEMPLATE_IDS.join(","),
+);
+const fullPlan = planFactory(11, { envCount: 1, perEnv: 3 });
+const fullTemplates = new Set(fullPlan.jobs.map((job) => job.scenario.templateId));
+check(
+  "perEnv cycles through every template",
+  fullPlan.jobs.length === 3 && fullTemplates.size === 3,
+  [...fullTemplates].join(","),
+);
+for (const job of fullPlan.jobs) {
+  const problems = validateScenario(job.scenario);
+  check(
+    `${job.scenario.id} (${job.scenario.templateId}) validates`,
+    problems.length === 0,
+    problems.join("; ") || "zero problems",
+  );
+}
+
 // 3. Scenario generation depends only on (env seed, env id, template, slot).
 const standalone = planA.jobs.map((job) =>
   generateScenario(job.env, job.scenario.templateId, 50, job.scenario.slot),
@@ -79,9 +103,91 @@ check(
   "in-plan scenarios equal standalone regeneration",
 );
 
-// 4. Environment binding: world-space anchors equal the machine-frame mapping.
+// 3b. Cell-state transitions match each template's failure mode (headless drive).
+const byTemplate = new Map(fullPlan.jobs.map((job) => [job.scenario.templateId, job.scenario]));
+const trip = byTemplate.get("sensor-trip")!;
+const lube = byTemplate.get("way-lube")!;
+const jam = byTemplate.get("atc-jam")!;
+// sensor-trip: dust present mid-scenario, gone after its clearedAt.
+const tripMid = driveScenario(trip, (trip.cell.dust!.appearsAt + trip.cell.dust!.clearedAt) / 2);
+const tripEnd = driveScenario(trip, trip.cell.dust!.clearedAt + 2);
+check(
+  "generated sensor-trip dust transitions",
+  tripMid.cell.dust === 1 && tripEnd.cell.dust === 0,
+  `${tripMid.cell.dust} -> ${tripEnd.cell.dust}`,
+);
+// way-lube: leak rises, then wipes away.
+const lubeMid = driveScenario(
+  lube,
+  (lube.cell.wayLube!.appearsAt + lube.cell.wayLube!.clearedAt) / 2,
+);
+const lubeEnd = driveScenario(lube, lube.cell.wayLube!.clearedAt + 2);
+check(
+  "generated way-lube leak transitions",
+  lubeMid.cell.wayLube === 1 && lubeEnd.cell.wayLube === 0,
+  `${lubeMid.cell.wayLube} -> ${lubeEnd.cell.wayLube}`,
+);
+// atc-jam: carousel frozen mid-scenario, rotating again after the clear.
+const jamMid = driveScenario(jam, (jam.cell.atc!.appearsAt + jam.cell.atc!.clearedAt) / 2);
+const jamEnd = driveScenario(jam, jam.cell.atc!.clearedAt + 2);
+check(
+  "generated atc-jam freezes + releases the carousel",
+  jamMid.cell.atcJammed === 1 &&
+    jamEnd.cell.atcJammed === 0 &&
+    jamEnd.cell.atcRotation > jamMid.cell.atcRotation,
+  `jam=${jamMid.cell.atcRotation.toFixed(2)} post=${jamEnd.cell.atcRotation.toFixed(2)}`,
+);
+// Signal stacks end green for every generated failure mode.
+check(
+  "generated scenarios end green",
+  [trip, lube, jam].every((s) => {
+    const end = driveScenario(s, s.durationSec - 0.1);
+    return end.cell.signal.green === 1 && end.cell.signal.red === 0;
+  }),
+  "red -> amber -> green on all three",
+);
+
+// 3c. ATC anchors mirror with the environment's ATC side; other templates hold.
+const envLeft = { ...fullPlan.jobs[0]!.env, atcSide: -1 as const };
+const jamLeft = generateScenario(envLeft, "atc-jam");
+const jamRight = generateScenario({ ...envLeft, atcSide: 1 }, "atc-jam");
+check(
+  "atc-jam anchors flip with atcSide",
+  jamLeft.faultWorld[0] === -jamRight.faultWorld[0] &&
+    jamLeft.faultWorld[1] === jamRight.faultWorld[1] &&
+    jamLeft.faultWorld[2] === jamRight.faultWorld[2] &&
+    jamLeft.faultWorld[0] < 0,
+  `left ${jamLeft.faultWorld.map((v) => v.toFixed(2))} vs right ${jamRight.faultWorld.map((v) => v.toFixed(2))}`,
+);
+check(
+  "cell builder mirrors the pod to match",
+  createMachineCell({ atcSide: -1 }).atc.position.x < 0,
+  `pod x ${createMachineCell({ atcSide: -1 }).atc.position.x.toFixed(2)}`,
+);
+
+// 3d. Repeated templates in one environment (slots) genuinely diverge.
+const slotPlan = planFactory(42, { envCount: 1, perEnv: 6 });
+const slotScenarios = slotPlan.jobs.map((job) => job.scenario);
+// Both slot-0 and slot-3 cycle back to sensor-trip: their beat timings and
+// narration must differ (seeded per slot).
+const slotTripA = slotScenarios[0]!;
+const slotTripB = slotScenarios[3]!;
+const distinctLessons = new Set(slotScenarios.map((s) => s.lesson.body));
+check(
+  "slot repeats diverge in timing and narration",
+  slotPlan.jobs.length === 6 &&
+    slotTripA.templateId === "sensor-trip" &&
+    slotTripB.templateId === "sensor-trip" &&
+    JSON.stringify(slotTripA.beats) !== JSON.stringify(slotTripB.beats) &&
+    distinctLessons.size >= 2,
+  `slot 0/3 timings differ, ${distinctLessons.size} distinct lessons across 6 slot scenarios`,
+);
+
+// 4. Environment binding: sensor-trip world anchors equal the machine-frame
+// mapping (the template whose anchors are front-fixed, not ATC-relative).
 let bindingHolds = true;
 for (const job of planA.jobs) {
+  if (job.scenario.templateId !== "sensor-trip") continue;
   const expected = toWorld(job.env, [0.42, 1.02, 0.4]); // guard sensor face anchor
   const got = job.scenario.faultWorld;
   if (expected.some((v, i) => Math.abs(v - got[i]) > 1e-9)) bindingHolds = false;
@@ -89,7 +195,7 @@ for (const job of planA.jobs) {
 check(
   "fault anchor equals toWorld(machine frame)",
   bindingHolds,
-  "faultWorld == toWorld(env, [0.42, 1.02, 0.4]) for all jobs",
+  "faultWorld == toWorld(env, [0.42, 1.02, 0.4]) for sensor-trip jobs",
 );
 
 // 5. Environments actually vary (fixed seeds -> fully deterministic check).

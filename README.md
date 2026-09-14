@@ -71,11 +71,17 @@ corpus generator built from layered specs (`src/factory/`):
   Scenario scripts stay authored in the machine frame and map into world space
   via `toWorld`, so any template runs in any environment unmodified.
   `LOCKED_ENV` reproduces the original Phase-0 look exactly.
-- `vocab.ts` + `scenario-gen.ts` - parametric scenario twins: seeded narration
-  picks from ground-truth-preserving banks plus beat-timing jitter. Output is a
-  plain `ScenarioDef`, so drive/apply/capture run generated scenarios unmodified.
+- `vocab.ts` + `scenario-gen.ts` - parametric twins of all three locked failure
+  modes (sensor-trip, way-lube, atc-jam) in a template registry: seeded
+  narration picks from ground-truth-preserving banks plus beat-timing jitter.
+  ATC-jam anchors flip with the environment's ATC side so they track the
+  mirrored pod. Output is a plain `ScenarioDef`, so drive/apply/capture run
+  generated scenarios unmodified.
 - `plan.ts` - `planFactory(rootSeed, { envCount, perEnv })`: seed -> environments
-  -> per-scenario sub-seeds. Pure data, no DOM/WebGL - headlessly testable.
+  -> per-scenario sub-seeds. `perEnv` cycles through every template, so
+  `perEnv > 1` produces genuinely different failure modes per environment (and
+  seeded slot repeats when it exceeds the template count). Pure data, no
+  DOM/WebGL - headlessly testable.
 - `world.ts` / `render.ts` / `manifest.ts` - one renderer + one scene shared
   across all jobs (cell rebuilt per environment), the existing batch pipeline
   per job, and a `FactoryCaptureManifest` adding `environment` (id, seed,
@@ -90,9 +96,11 @@ under `renders/<scenario-id>/`). The generated scenario dropdown entries are
 the same objects the planner emits.
 
 `npm run verify:factory` proves determinism (same seed -> identical plans;
-different seeds diverge), generated-scenario validity + corpus shape, world
-binding (`faultWorld == toWorld(env, machine-frame anchor)`), environment
-variety, provenance manifest blocks, and `LOCKED_ENV`/cell-builder parity.
+different seeds diverge), generated-scenario validity + corpus shape, template
+cycling, per-mode cell-state transitions driven headlessly (dust, leak, jam),
+ATC-side anchor flipping + pod mirroring, slot-repeat divergence, world binding
+(`faultWorld == toWorld(env, machine-frame anchor)`), environment variety,
+provenance manifest blocks, and `LOCKED_ENV`/cell-builder parity.
 
 ## Verification
 
