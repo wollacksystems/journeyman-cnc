@@ -34,6 +34,11 @@ Batch outputs land in gitignored `renders/<scenario-id>/`; small fixtures are
 committed. Feature work happens on the `synthetic-capture` branch (see
 `worktrees/` conventions in the parent workspace).
 
+Phase 4 - factory of sims (v0.2.0): the singleton simulator became a generator.
+A seeded planner produces whole corpora of environments and scenario scripts as
+data, rendered through the same deterministic capture pipeline with full
+provenance manifests for recall (see "Factory of sims" below).
+
 ## Phase 2 capture flow (dev controls)
 
 The dev toolbar (lower-left) exposes two captures:
@@ -52,6 +57,42 @@ registered scenarios in order, writing four production-camera clips plus a
 manifest per scenario under `renders/<scenario-id>/`. `npm run verify:scenarios`
 checks registry order, 45-60 s duration, validation, fixture shape, and the
 sensor dust, way-lube, and ATC jam state transitions.
+
+## Factory of sims
+
+The app is no longer one hardcoded cell with a fixed scenario registry; it is a
+corpus generator built from layered specs (`src/factory/`):
+
+- `rng.ts` - pure mulberry32 seeded RNG. Factory contract: a root seed fully
+  determines the corpus - same seed, byte-identical specs (geometry, beat
+  timings, narration picks), so generated footage is reproducible ground truth.
+- `environment.ts` - `EnvSpec` + `generateEnvironment(seed)`: whole-room
+  orientation (4 yaws), ATC pod side, shop-floor palette, work light, and fog.
+  Scenario scripts stay authored in the machine frame and map into world space
+  via `toWorld`, so any template runs in any environment unmodified.
+  `LOCKED_ENV` reproduces the original Phase-0 look exactly.
+- `vocab.ts` + `scenario-gen.ts` - parametric scenario twins: seeded narration
+  picks from ground-truth-preserving banks plus beat-timing jitter. Output is a
+  plain `ScenarioDef`, so drive/apply/capture run generated scenarios unmodified.
+- `plan.ts` - `planFactory(rootSeed, { envCount, perEnv })`: seed -> environments
+  -> per-scenario sub-seeds. Pure data, no DOM/WebGL - headlessly testable.
+- `world.ts` / `render.ts` / `manifest.ts` - one renderer + one scene shared
+  across all jobs (cell rebuilt per environment), the existing batch pipeline
+  per job, and a `FactoryCaptureManifest` adding `environment` (id, seed,
+  variant, rotation, ATC side, palette) and `factory` (generator, engine
+  version, template, root seed, timestamp) provenance blocks for ingest recall.
+
+Dev controls (lower-left): `PLAN FACTORY` prints the corpus a seed will produce;
+`PREVIEW ENV` cycles the live canvas through the planned generated environments
+(rotated cell, palette, lighting + the generated scenario's beats); `RENDER
+FACTORY` renders every generated job (per-camera MP4s + provenance manifest
+under `renders/<scenario-id>/`). The generated scenario dropdown entries are
+the same objects the planner emits.
+
+`npm run verify:factory` proves determinism (same seed -> identical plans;
+different seeds diverge), generated-scenario validity + corpus shape, world
+binding (`faultWorld == toWorld(env, machine-frame anchor)`), environment
+variety, provenance manifest blocks, and `LOCKED_ENV`/cell-builder parity.
 
 ## Verification
 

@@ -1,9 +1,6 @@
-import * as THREE from "three";
 import "./style.css";
 import { FrameClock } from "./clock";
-import { createAvatar, type Avatar } from "./avatar";
-import { createMachineCell, type MachineCell } from "./cell";
-import { CameraRig, VIEWPORT_GRID, type CameraId } from "./rig";
+import { CameraRig, VIEWPORT_GRID } from "./rig";
 import { startInspectorHub } from "./inspector";
 import { scenarios, scenarioById } from "./scenario/registry";
 import type { ScenarioDef } from "./scenario/types";
@@ -13,6 +10,10 @@ import { applyScenario } from "./sim/apply";
 import { captureBatch, downloadBlob, CAPTURE_HEIGHT, CAPTURE_WIDTH } from "./capture/batch";
 import { recordComposite } from "./capture/composite";
 import { buildCaptureManifest } from "./manifest";
+import { LOCKED_ENV } from "./factory/environment";
+import { planFactory, type FactoryPlan } from "./factory/plan";
+import { createFactoryWorld } from "./factory/world";
+import { renderFactoryJob } from "./factory/render";
 
 const FPS = 30;
 
@@ -36,68 +37,20 @@ let selectedScenario: ScenarioDef = scenarios[0]!;
 const canvas = document.querySelector<HTMLCanvasElement>("#rig");
 if (!canvas) throw new Error("#rig canvas missing");
 
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFShadowMap;
-
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x11141a);
-scene.fog = new THREE.Fog(0x11141a, 14, 32);
-
-// Neutral key + fill lighting; revisit in the Phase 5 polish pass (PBR/HDRI).
-scene.add(new THREE.HemisphereLight(0x8fa3bf, 0x2b2f36, 0.9));
-const key = new THREE.DirectionalLight(0xffffff, 1.6);
-key.position.set(4, 8, 3);
-key.castShadow = true;
-key.shadow.mapSize.set(1024, 1024);
-key.shadow.camera.left = -8;
-key.shadow.camera.right = 8;
-key.shadow.camera.top = 8;
-key.shadow.camera.bottom = -8;
-key.shadow.camera.near = 0.5;
-key.shadow.camera.far = 24;
-scene.add(key);
-const fill = new THREE.DirectionalLight(0x9db4d0, 0.5);
-fill.position.set(-5, 6, -4);
-scene.add(fill);
-// Local fill over the work area so first-person close-ups (mount inside the
-// lean/shadow envelope) keep the sensor/pocket/leak region legible.
-const workLight = new THREE.PointLight(0xfff2e0, 14, 6, 2);
-workLight.position.set(0.4, 2.2, 1.5);
-scene.add(workLight);
-
-const cell: MachineCell = createMachineCell();
-scene.add(cell.root);
-
-const avatar: Avatar = createAvatar();
-scene.add(avatar.root);
-
-// Reference grid for the debug cams.
-const grid = new THREE.GridHelper(24, 48, 0x3a4150, 0x242a33);
-grid.position.y = 0.002;
-scene.add(grid);
-
 const rig = new CameraRig();
 
-const viewportById = (id: CameraId): THREE.PerspectiveCamera => {
-  const vp = rig.viewports.find((v) => v.id === id);
-  if (!vp) throw new Error(`viewport ${id} missing`);
-  return vp.camera;
-};
+// The app IS the factory world: the visible canvas renders through the
+// factory's spec-driven environment. LOCKED_ENV reproduces the original
+// Phase-0 look exactly; generated environments swap in via setEnv (both in
+// the factory UI below and during factory captures).
+const factoryWorld = createFactoryWorld(rig, LOCKED_ENV, {
+  canvas,
+  pixelRatio: Math.min(window.devicePixelRatio, 2),
+});
+const { renderer, scene, avatar, cell } = factoryWorld;
 
-// Mount the first-person cameras under the torso-mounted look pivots so they
-// ride torso lean and gait bob rigidly (mounts move with the body) and keep
-// tracking the scenario look target. The body still hides per viewport, so
-// those cams never see their own model.
-const headCam = viewportById("head");
-headCam.position.set(0, 0.02, 0.16);
-headCam.rotation.set(0, 0, 0);
-const chestCam = viewportById("chest");
-chestCam.position.set(0, -0.3, 0.32);
-chestCam.rotation.set(-0.25, 0, 0);
-avatar.face.add(headCam);
-avatar.chestFace.add(chestCam);
+// First-person head/chest cameras are mounted onto the factory avatar by
+// createFactoryWorld (single mount point shared by live preview and capture).
 
 const inspectorHub = startInspectorHub();
 const snapshotViewports = rig.viewports.map((v) => ({ id: v.id, label: v.label }));
@@ -199,12 +152,102 @@ if (import.meta.env.DEV) {
   toolbar.append(recBtn, corpusBtn);
   document.body.appendChild(toolbar);
 
+  // Factory UI: plan + render generated corpora (seeded, deterministic).
+  const factoryBox = document.createElement("div");
+  factoryBox.id = "factory-box";
+
+  const factorySeed = document.createElement("input");
+  factorySeed.id = "factory-seed";
+  factorySeed.type = "number";
+  factorySeed.value = "2026";
+  factorySeed.min = "0";
+  factorySeed.title = "Factory root seed (same seed -> identical corpus)";
+
+  const factoryEnvs = document.createElement("input");
+  factoryEnvs.id = "factory-envs";
+  factoryEnvs.type = "number";
+  factoryEnvs.value = "2";
+  factoryEnvs.min = "1";
+  factoryEnvs.max = "8";
+  factoryEnvs.title = "Generated environments";
+
+  const factoryPerEnv = document.createElement("input");
+  factoryPerEnv.id = "factory-per-env";
+  factoryPerEnv.type = "number";
+  factoryPerEnv.value = "1";
+  factoryPerEnv.min = "1";
+  factoryPerEnv.max = "4";
+  factoryPerEnv.title = "Scenarios per environment";
+
+  const factoryPlanBtn = document.createElement("button");
+  factoryPlanBtn.textContent = "PLAN FACTORY";
+  factoryPlanBtn.addEventListener("click", () => {
+    factoryPlan = readFactoryPlan();
+    statusFor(
+      `planned seed ${factoryPlan.rootSeed}: ${factoryPlan.jobs.length} scenarios across ${factoryPlan.envCount} envs — ${factoryPlan.jobs.map((j) => j.scenario.id).join(", ")}`,
+    );
+  });
+
+  const factoryRenderBtn = document.createElement("button");
+  factoryRenderBtn.textContent = "RENDER FACTORY";
+  factoryRenderBtn.addEventListener("click", () => {
+    void factoryFlow();
+  });
+
+  // Cycles the live canvas through the planned environments (generated cell
+  // orientation/palette/lighting + the generated scenario's beats) without
+  // committing to a full render.
+  const factoryPreviewBtn = document.createElement("button");
+  factoryPreviewBtn.textContent = "PREVIEW ENV";
+  factoryPreviewBtn.title = "Cycle the live view through the planned generated environments";
+  factoryPreviewBtn.addEventListener("click", () => {
+    factoryPlan = factoryPlan ?? readFactoryPlan();
+    if (factoryPlan.jobs.length === 0) return;
+    factoryPreviewIndex = (factoryPreviewIndex + 1) % factoryPlan.jobs.length;
+    const job = factoryPlan.jobs[factoryPreviewIndex];
+    if (!job) return;
+    factoryWorld.setEnv(job.env);
+    selectedScenario = job.scenario;
+    clock.reset();
+    statusFor(
+      `previewing ${factoryPreviewIndex + 1}/${factoryPlan.jobs.length}: ${job.scenario.id} (${job.env.variant}, ${job.env.palette.name}, rot ${(job.env.machineRotation * 180) / Math.PI}°)`,
+    );
+  });
+  let factoryPreviewIndex = -1;
+
+  factoryBox.append(
+    factorySeed,
+    factoryEnvs,
+    factoryPerEnv,
+    factoryPlanBtn,
+    factoryPreviewBtn,
+    factoryRenderBtn,
+  );
+  document.body.appendChild(factoryBox);
+
+  let factoryPlan: FactoryPlan | null = null;
+  const readFactoryPlan = (): FactoryPlan =>
+    planFactory(Number(factorySeed.value) >>> 0, {
+      envCount: Math.max(1, Number(factoryEnvs.value) || 1),
+      perEnv: Math.max(1, Number(factoryPerEnv.value) || 1),
+    });
+
   let busy = false;
   const setBusy = (value: boolean): void => {
     busy = value;
     scenarioSelect.disabled = value;
     recBtn.disabled = value;
     corpusBtn.disabled = value;
+    for (const el of [
+      factorySeed,
+      factoryEnvs,
+      factoryPerEnv,
+      factoryPlanBtn,
+      factoryPreviewBtn,
+      factoryRenderBtn,
+    ]) {
+      el.disabled = value;
+    }
   };
   const statusFor = (text: string): void => {
     status.textContent = text;
@@ -286,6 +329,50 @@ if (import.meta.env.DEV) {
     } catch (error) {
       console.error(error);
       statusFor(`batch failed: ${String(error)}`);
+    } finally {
+      renderer.setAnimationLoop(frameLoop);
+      setBusy(false);
+    }
+  }
+
+  async function factoryFlow(): Promise<void> {
+    if (busy) return;
+    setBusy(true);
+    renderer.setAnimationLoop(null); // factory drives its own frames
+    try {
+      const plan = factoryPlan ?? readFactoryPlan();
+      factoryPlan = plan;
+      statusFor(
+        `factory seed ${plan.rootSeed}: rendering ${plan.jobs.length} generated scenario(s)...`,
+      );
+      let clips = 0;
+      for (let ji = 0; ji < plan.jobs.length; ji++) {
+        const job = plan.jobs[ji];
+        if (!job) throw new Error(`factory job ${ji} missing`);
+        const result = await renderFactoryJob(factoryWorld, job, {
+          rootSeed: plan.rootSeed,
+          onProgress: (p) => {
+            statusFor(
+              `${job.scenario.id}: ${p.camera} ${p.frame}/${p.totalFrames} (camera ${p.cameraIndex + 1}/${p.cameraTotal})`,
+            );
+          },
+        });
+        for (const clip of result.clips) {
+          downloadBlob(clip.blob, `renders/${job.scenario.id}/${clip.camera}.mp4`);
+        }
+        downloadBlob(
+          new Blob([JSON.stringify(result.manifest, null, 2)], { type: "application/json" }),
+          `renders/${job.scenario.id}/manifest.json`,
+        );
+        clips += result.clips.length;
+        statusFor(`saved ${job.scenario.id} (${ji + 1}/${plan.jobs.length})`);
+      }
+      statusFor(
+        `factory saved renders/: ${plan.jobs.length} scenarios, ${clips} clips, seed ${plan.rootSeed}`,
+      );
+    } catch (error) {
+      console.error(error);
+      statusFor(`factory failed: ${String(error)}`);
     } finally {
       renderer.setAnimationLoop(frameLoop);
       setBusy(false);
