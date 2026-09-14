@@ -60,6 +60,10 @@ Playwright-managed Chromium (`npx playwright-core install chromium` once),
 asserts the capture UI wiring, validates all committed fixtures, triggers the
 registry-wide RENDER CORPUS, and treats the exact on-page status line
 `saved renders/: 3 scenarios + 12 clips + manifests` as the end-to-end pass
-signal. Requires Node 23.6+. For a complete local smoke without waiting for
-1080p encoding, start Vite with `VITE_CAPTURE_WIDTH=256 VITE_CAPTURE_HEIGHT=144`;
-the default capture remains 1920x1080.
+signal. Requires Node 23.6+. The smoke run persists every rendered artifact
+(gitignored) under `scripts/smoke-artifacts/renders/<scenario-id>/` instead of
+losing them to the browser download channel. For a fast, PR-embeddable run the
+smoke server loads `.env.smoke` (640x360 capture, 0.9 Mbps composite) via
+`--mode smoke`; production captures remain 1920x1080 at 12 Mbps. Each preview
+webm is asserted under GitHub's 10 MB attachment limit so it can be uploaded as
+a release asset and embedded inline in a PR.

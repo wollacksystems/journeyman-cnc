@@ -16,6 +16,14 @@ import { buildCaptureManifest } from "./manifest";
 
 const FPS = 30;
 
+/**
+ * Composite (webm) recording bitrate. Lower it (e.g. VITE_PREVIEW_BITS_PER_SECOND=900000)
+ * for small, PR-embeddable preview clips; production captures use the 12 Mbps default.
+ */
+const COMPOSITE_BITS_PER_SECOND = Number(
+  import.meta.env.VITE_PREVIEW_BITS_PER_SECOND ?? 12_000_000,
+);
+
 const scenarioProblems = scenarios.flatMap((candidate) =>
   validateScenario(candidate).map((problem) => `${candidate.id}: ${problem}`),
 );
@@ -211,6 +219,7 @@ if (import.meta.env.DEV) {
         (t) => {
           statusFor(`recording ${activeScenario.id} composite ${t.toFixed(1)}s`);
         },
+        COMPOSITE_BITS_PER_SECOND,
       );
       downloadBlob(blob, `renders/${activeScenario.id}/composite.webm`);
       statusFor(`saved renders/${activeScenario.id}/composite.webm`);

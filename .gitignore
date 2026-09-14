@@ -14,9 +14,10 @@ scripts/smoke-artifacts/
 scripts/verify-cam-rig.bundle.mjs
 scripts/verify-scenarios.bundle.mjs
 
-# Environment / secrets
+# Environment / secrets (.env.smoke is committed smoke capture config, not secrets)
 .env
 .env.*
+!.env.smoke
 
 # Editor / OS
 .DS_Store
