@@ -87,6 +87,15 @@ corpus generator built from layered specs (`src/factory/`):
   per job, and a `FactoryCaptureManifest` adding `environment` (id, seed,
   variant, rotation, ATC side, palette) and `factory` (generator, engine
   version, template, root seed, timestamp) provenance blocks for ingest recall.
+- `corpus.ts` / `corpus-save.ts` - stable on-disk export for the ingest
+  pipeline (v0.3.0). RENDER FACTORY now writes `corpora/<rootSeed padded to
+10>/`: `index.json` (the ingest entry point: seeds, plan options, per-
+  scenario clip/manifest/script paths, lessons), `envs/<env-id>.json`,
+  `scenarios/<scenario-id>.json` (ground-truth script + provenance), and
+  `clips/<scenario-id>/{camera}.mp4 + manifest.json`. Paths are a pure
+  function of (root seed, env id, scenario id, camera) - no timestamps - so
+  re-exporting a seed overwrites in place and ingest can key on paths as
+  stable recall identities. The index downloads last, certifying completeness.
 
 Dev controls (lower-left): `PLAN FACTORY` prints the corpus a seed will produce;
 `PREVIEW ENV` cycles the live canvas through the planned generated environments
@@ -100,7 +109,9 @@ different seeds diverge), generated-scenario validity + corpus shape, template
 cycling, per-mode cell-state transitions driven headlessly (dust, leak, jam),
 ATC-side anchor flipping + pod mirroring, slot-repeat divergence, world binding
 (`faultWorld == toWorld(env, machine-frame anchor)`), environment variety,
-provenance manifest blocks, and `LOCKED_ENV`/cell-builder parity.
+provenance manifest blocks, `LOCKED_ENV`/cell-builder parity, and the corpus
+export layer (stable paths, complete index, seeds that replay every script,
+lessons carried for ingest labels, overwrite-in-place re-export).
 
 ## Verification
 
@@ -116,3 +127,14 @@ smoke server loads `.env.smoke` (640x360 capture, 0.9 Mbps composite) via
 `--mode smoke`; production captures remain 1920x1080 at 12 Mbps. Each preview
 webm is asserted under GitHub's 10 MB attachment limit so it can be uploaded as
 a release asset and embedded inline in a PR.
+
+Headless factory driver (`npm run factory:run`): produces a complete generated
+corpus in Chromium without touching the dev UI. Same browser strategy as the
+smoke test (with the CDP fallback for locked-down machines); fills the factory
+panel (seed / envs / perEnv via `FACTORY_RUN_SEED`, `FACTORY_RUN_ENVS`,
+`FACTORY_RUN_PER_ENV`), asserts the planned-corpus status line, triggers RENDER
+FACTORY, waits for `saved corpora/<rootSeedPadded10>: N scenarios, M clips +
+index.json`, then validates the exported corpus on disk under
+`scripts/factory-artifacts/` (index schema, root seed, scenario count, lesson
+presence, and every referenced artifact non-empty). Point
+`FACTORY_RUN_URL` at any dev server; ~3 min per scenario at 640x360.

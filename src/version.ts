@@ -1,2 +1,2 @@
 /** Mirrors package.json "version" so the capture manifest needs no JSON import. */
-export const ENGINE_VERSION = "0.2.0";
+export const ENGINE_VERSION = "0.3.0";

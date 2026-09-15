@@ -1,7 +1,7 @@
 {
   "name": "journeyman-sim",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Synthetic CNC training environment: multi-camera Three.js rig with scripted scenarios and a render-then-ingest proof pipeline.",
   "type": "module",
   "scripts": {
@@ -16,7 +16,8 @@
     "verify:factory": "esbuild scripts/verify-factory.mts --bundle --platform=node --format=esm --external:three --outfile=scripts/verify-factory.bundle.mjs --log-level=warning && node scripts/verify-factory.bundle.mjs && rm scripts/verify-factory.bundle.mjs",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "smoke": "node scripts/smoke.mts"
+    "smoke": "node scripts/smoke.mts",
+    "factory:run": "node scripts/factory-run.mts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
