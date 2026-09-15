@@ -1,0 +1,41 @@
+name: CI
+
+# PR gate: the exact local gate (typecheck, lint, format check, verify
+# suites, build) surfaced as visible PR checks — same commands, one job.
+# The long capture flows (`npm run smoke`, `npm run factory:run`) stay out
+# on purpose: they need a dev server + Chromium and run minutes per
+# scenario, so they remain local/manual verification.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Lint
+        run: npm run lint
+      - name: Format check
+        run: npm run format:check
+      - name: Verify suites (rig, scenarios, factory)
+        run: |
+          npm run verify:rig
+          npm run verify:scenarios
+          npm run verify:factory
+      - name: Build
+        run: npm run build

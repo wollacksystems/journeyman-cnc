@@ -176,6 +176,11 @@ relative chain regrows.
 
 ## Verification
 
+CI (`.github/workflows/ci.yml`) runs the headless gate on every PR and push to
+`main`: typecheck, lint, format check, the three verify suites, and build. The
+capture flows (`npm run smoke`, `npm run factory:run`) need a dev server +
+Chromium and minutes per scenario, so they stay local/manual.
+
 Headless smoke test (`npm run smoke`): with `npm run dev` running, launches a
 Playwright-managed Chromium (`npx playwright-core install chromium` once),
 asserts the capture UI wiring, validates all committed fixtures, triggers the
