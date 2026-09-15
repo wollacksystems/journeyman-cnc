@@ -5,7 +5,8 @@ import { createAvatar, type Avatar } from "./avatar";
 import { createMachineCell, type MachineCell } from "./cell";
 import { CameraRig, VIEWPORT_GRID, type CameraId } from "./rig";
 import { startInspectorHub } from "./inspector";
-import { sensorTripScenario } from "./scenario/sensor-trip";
+import { scenarios, scenarioById } from "./scenario/registry";
+import type { ScenarioDef } from "./scenario/types";
 import { validateScenario } from "./scenario/types";
 import { driveScenario } from "./scenario/drive";
 import { applyScenario } from "./sim/apply";
@@ -15,13 +16,22 @@ import { buildCaptureManifest } from "./manifest";
 
 const FPS = 30;
 
-// Phase 2 drives the first scenario end to end; later phases swap in more
-// definitions from a scenario registry.
-const scenario = sensorTripScenario;
-const scenarioProblems = validateScenario(scenario);
+/**
+ * Composite (webm) recording bitrate. Lower it (e.g. VITE_PREVIEW_BITS_PER_SECOND=900000)
+ * for small, PR-embeddable preview clips; production captures use the 12 Mbps default.
+ */
+const COMPOSITE_BITS_PER_SECOND = Number(
+  import.meta.env.VITE_PREVIEW_BITS_PER_SECOND ?? 12_000_000,
+);
+
+const scenarioProblems = scenarios.flatMap((candidate) =>
+  validateScenario(candidate).map((problem) => `${candidate.id}: ${problem}`),
+);
 if (scenarioProblems.length > 0) {
   throw new Error(`Scenario validation failed: ${scenarioProblems.join("; ")}`);
 }
+
+let selectedScenario: ScenarioDef = scenarios[0]!;
 
 const canvas = document.querySelector<HTMLCanvasElement>("#rig");
 if (!canvas) throw new Error("#rig canvas missing");
@@ -51,6 +61,11 @@ scene.add(key);
 const fill = new THREE.DirectionalLight(0x9db4d0, 0.5);
 fill.position.set(-5, 6, -4);
 scene.add(fill);
+// Local fill over the work area so first-person close-ups (mount inside the
+// lean/shadow envelope) keep the sensor/pocket/leak region legible.
+const workLight = new THREE.PointLight(0xfff2e0, 14, 6, 2);
+workLight.position.set(0.4, 2.2, 1.5);
+scene.add(workLight);
 
 const cell: MachineCell = createMachineCell();
 scene.add(cell.root);
@@ -76,10 +91,10 @@ const viewportById = (id: CameraId): THREE.PerspectiveCamera => {
 // tracking the scenario look target. The body still hides per viewport, so
 // those cams never see their own model.
 const headCam = viewportById("head");
-headCam.position.set(0, 0.02, 0.12);
+headCam.position.set(0, 0.02, 0.16);
 headCam.rotation.set(0, 0, 0);
 const chestCam = viewportById("chest");
-chestCam.position.set(0, -0.35, 0.18);
+chestCam.position.set(0, -0.3, 0.32);
 chestCam.rotation.set(-0.25, 0, 0);
 avatar.face.add(headCam);
 avatar.chestFace.add(chestCam);
@@ -103,7 +118,7 @@ resize();
 function frameLoop(): void {
   const state = clock.tick();
   if (state) {
-    applyScenario(driveScenario(scenario, state.t), avatar, cell);
+    applyScenario(driveScenario(selectedScenario, state.t), avatar, cell);
     rig.update(state.t, avatar.root);
     inspectorHub.publish({
       frame: state.frame,
@@ -151,6 +166,24 @@ if (import.meta.env.DEV) {
   const toolbar = document.createElement("div");
   toolbar.id = "capture-toolbar";
 
+  const scenarioSelect = document.createElement("select");
+  scenarioSelect.id = "scenario-select";
+  for (const candidate of scenarios) {
+    const option = document.createElement("option");
+    option.value = candidate.id;
+    option.textContent = `${candidate.id} — ${candidate.durationSec}s`;
+    scenarioSelect.appendChild(option);
+  }
+  scenarioSelect.value = selectedScenario.id;
+  scenarioSelect.addEventListener("change", () => {
+    const next = scenarioById.get(scenarioSelect.value);
+    if (!next || busy) return;
+    selectedScenario = next;
+    clock.reset();
+    statusFor(`selected ${selectedScenario.id}`);
+  });
+  toolbar.appendChild(scenarioSelect);
+
   const recBtn = document.createElement("button");
   recBtn.textContent = "REC COMPOSITE";
   recBtn.addEventListener("click", () => {
@@ -169,6 +202,7 @@ if (import.meta.env.DEV) {
   let busy = false;
   const setBusy = (value: boolean): void => {
     busy = value;
+    scenarioSelect.disabled = value;
     recBtn.disabled = value;
     corpusBtn.disabled = value;
   };
@@ -180,13 +214,20 @@ if (import.meta.env.DEV) {
     if (busy) return;
     setBusy(true);
     try {
+      const activeScenario = selectedScenario;
       clock.reset(); // wall-clock composite runs a fresh 0..duration loop
-      statusFor("recording composite...");
-      const blob = await recordComposite(renderer, scenario.durationSec, FPS, (t) => {
-        statusFor(`recording composite ${t.toFixed(1)}s`);
-      });
-      downloadBlob(blob, `renders/${scenario.id}/composite.webm`);
-      statusFor(`saved renders/${scenario.id}/composite.webm`);
+      statusFor(`recording ${activeScenario.id} composite...`);
+      const blob = await recordComposite(
+        renderer,
+        activeScenario.durationSec,
+        activeScenario.fps,
+        (t) => {
+          statusFor(`recording ${activeScenario.id} composite ${t.toFixed(1)}s`);
+        },
+        COMPOSITE_BITS_PER_SECOND,
+      );
+      downloadBlob(blob, `renders/${activeScenario.id}/composite.webm`);
+      statusFor(`saved renders/${activeScenario.id}/composite.webm`);
     } catch (error) {
       console.error(error);
       statusFor(`composite failed: ${String(error)}`);
@@ -200,38 +241,48 @@ if (import.meta.env.DEV) {
     setBusy(true);
     renderer.setAnimationLoop(null); // batch drives its own frames; don't compete with the live canvas
     try {
-      const totalFrames = Math.round(scenario.durationSec * scenario.fps);
-      statusFor(
-        `encoding ${scenario.cameras.length} cameras x ${totalFrames} frames (${CAPTURE_WIDTH}x${CAPTURE_HEIGHT})`,
-      );
-      const startedUtc = new Date().toISOString();
-      const result = await captureBatch({
-        scenario,
-        rig,
-        scene,
-        avatar,
-        cell,
-        onProgress: (p) => {
-          statusFor(
-            `${p.camera} ${p.frame}/${p.totalFrames} (camera ${p.cameraIndex + 1}/${p.cameraTotal})`,
-          );
-        },
-      });
-      for (const clip of result.clips) {
-        downloadBlob(clip.blob, `renders/${scenario.id}/${clip.camera}.mp4`);
+      let totalClips = 0;
+      statusFor(`encoding corpus: ${scenarios.length} scenarios`);
+      for (let si = 0; si < scenarios.length; si++) {
+        const activeScenario = scenarios[si];
+        if (!activeScenario) throw new Error(`scenario ${si} missing`);
+        const totalFrames = Math.round(activeScenario.durationSec * activeScenario.fps);
+        statusFor(
+          `encoding ${activeScenario.id} (${si + 1}/${scenarios.length}): ${activeScenario.cameras.length} cameras x ${totalFrames} frames (${CAPTURE_WIDTH}x${CAPTURE_HEIGHT})`,
+        );
+        const startedUtc = new Date().toISOString();
+        const result = await captureBatch({
+          scenario: activeScenario,
+          rig,
+          scene,
+          avatar,
+          cell,
+          onProgress: (p) => {
+            statusFor(
+              `scenario ${activeScenario.id}: ${p.camera} ${p.frame}/${p.totalFrames} (camera ${p.cameraIndex + 1}/${p.cameraTotal})`,
+            );
+          },
+        });
+        for (const clip of result.clips) {
+          downloadBlob(clip.blob, `renders/${activeScenario.id}/${clip.camera}.mp4`);
+        }
+        const manifest = buildCaptureManifest(
+          activeScenario,
+          rig,
+          CAPTURE_WIDTH,
+          CAPTURE_HEIGHT,
+          startedUtc,
+        );
+        downloadBlob(
+          new Blob([JSON.stringify(manifest, null, 2)], { type: "application/json" }),
+          `renders/${activeScenario.id}/manifest.json`,
+        );
+        totalClips += result.clips.length;
+        statusFor(
+          `saved ${activeScenario.id}: ${result.clips.length} clips + manifest (${si + 1}/${scenarios.length})`,
+        );
       }
-      const manifest = buildCaptureManifest(
-        scenario,
-        rig,
-        CAPTURE_WIDTH,
-        CAPTURE_HEIGHT,
-        startedUtc,
-      );
-      downloadBlob(
-        new Blob([JSON.stringify(manifest, null, 2)], { type: "application/json" }),
-        `renders/${scenario.id}/manifest.json`,
-      );
-      statusFor(`saved renders/${scenario.id}/: ${result.clips.length} clips + manifest`);
+      statusFor(`saved renders/: ${scenarios.length} scenarios + ${totalClips} clips + manifests`);
     } catch (error) {
       console.error(error);
       statusFor(`batch failed: ${String(error)}`);

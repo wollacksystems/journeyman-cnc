@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import type { Avatar } from "../avatar";
 import type { MachineCell } from "../cell";
-import { setSensorDust, setSignalLights } from "../cell";
+import { setAtcState, setSensorDust, setSignalLights, setWayLube } from "../cell";
 import type { ScenarioState } from "../scenario/drive";
 
 const WALK_CYCLE = 7;
@@ -49,6 +49,8 @@ export function applyScenario(state: ScenarioState, avatar: Avatar, cell: Machin
 
   // Cell state.
   setSensorDust(cell, state.cell.dust);
+  setWayLube(cell, state.cell.wayLube);
+  setAtcState(cell, state.cell.atcJammed, state.cell.atcRotation);
   setSignalLights(
     cell.signalStack,
     state.cell.signal.red,

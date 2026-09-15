@@ -1,0 +1,31 @@
+{
+  "scenarioId": "way-lube",
+  "durationSec": 50,
+  "fps": 30,
+  "cameras": ["side-a", "side-b", "head", "chest"],
+  "beats": [
+    { "id": "walk_up", "tStart": 0, "tEnd": 10, "cameraHint": "side-a" },
+    { "id": "listen_axis", "tStart": 10, "tEnd": 20, "cameraHint": "head" },
+    { "id": "inspect_leak", "tStart": 20, "tEnd": 32, "cameraHint": "chest" },
+    { "id": "prime_lube", "tStart": 32, "tEnd": 42, "cameraHint": "head" },
+    { "id": "verify_motion", "tStart": 42, "tEnd": 50, "cameraHint": "side-a" }
+  ],
+  "narration": [
+    {
+      "t": 2,
+      "text": "The axis sounds dry after warm-up. I am checking lubrication before I chase servo or ball-screw faults."
+    },
+    {
+      "t": 23,
+      "text": "The metering line is wet at the fitting but the guideway is dry. That points to a leak, not a tuning problem."
+    },
+    {
+      "t": 44,
+      "text": "Run a slow test move. Smooth travel and a thin even film confirm the lubrication circuit is working."
+    }
+  ],
+  "lesson": {
+    "title": "A dry slideway points to a way-lube delivery problem before a servo fault",
+    "body": "Inspect the reservoir, metering line, fittings, and pump before changing servo tuning; repair, refill, prime, and verify a slow test move."
+  }
+}

@@ -10,8 +10,8 @@ import { applyScenario } from "../sim/apply";
 import { pickVideoCodec } from "./probe";
 
 /** Locked production capture size (see README approach: 1080p / 30 fps). */
-export const CAPTURE_WIDTH = 1920;
-export const CAPTURE_HEIGHT = 1080;
+export const CAPTURE_WIDTH = Number(import.meta.env.VITE_CAPTURE_WIDTH ?? 1920);
+export const CAPTURE_HEIGHT = Number(import.meta.env.VITE_CAPTURE_HEIGHT ?? 1080);
 
 export interface BatchOptions {
   scenario: ScenarioDef;

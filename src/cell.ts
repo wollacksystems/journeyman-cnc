@@ -14,6 +14,8 @@ export interface MachineCell {
   spindle: THREE.Group;
   /** Tool changer pod (ATC) the jam scenario targets. */
   atc: THREE.Group;
+  /** Way-lube leak marker on the table/guideway. */
+  wayLube: THREE.Mesh;
   /** Guard door panel + wafer-style proximity sensor the sensor-trip scenario targets. */
   guardSensor: {
     panel: THREE.Mesh;
@@ -123,7 +125,17 @@ export function createMachineCell(): MachineCell {
   atc.name = "atc";
   atc.position.set(2.1, 0, -1.0);
   const atcBase = cyl(0.5, 0.6, 0.9, darkSteel, 0, 0.45, 0);
-  const atcDisc = cyl(0.55, 0.55, 0.12, steel, 0, 1.05, 0);
+  // Own material instance: setAtcState drives the jam glow on this disc and
+  // must not tint every shared-steel mesh in the cell red.
+  const atcDisc = cyl(
+    0.55,
+    0.55,
+    0.12,
+    new THREE.MeshStandardMaterial({ color: 0x6b7280, roughness: 0.55, metalness: 0.35 }),
+    0,
+    1.05,
+    0,
+  );
   atc.add(atcBase, atcDisc);
   for (let i = 0; i < 8; i++) {
     const a = (i / 8) * Math.PI * 2;
@@ -159,6 +171,25 @@ export function createMachineCell(): MachineCell {
   dust.position.set(0.35, 1.06, 1.945);
   dust.name = "sensor-dust";
   machine.add(sensorHead, sensorFace, dust);
+
+  const wayLube = new THREE.Mesh(
+    new THREE.SphereGeometry(0.12, 16, 10),
+    new THREE.MeshStandardMaterial({
+      color: 0x6b8f3a,
+      emissive: 0x1f330f,
+      transparent: true,
+      opacity: 0,
+      roughness: 0.25,
+      metalness: 0.1,
+    }),
+  );
+  wayLube.name = "way-lube-leak";
+  // On the metering junction at the guard-side frame (world ~(-0.3, 1.0, 0.25)):
+  // visible from the side cams and within the avatar's reach envelope, unlike
+  // the machine interior behind the guard door.
+  wayLube.position.set(-0.3, 1.0, 1.85);
+  wayLube.scale.set(1.2, 0.5, 0.6);
+  machine.add(wayLube);
 
   // Signal stack on the enclosure wall (scenario-driven).
   const signalStack = {
@@ -198,6 +229,7 @@ export function createMachineCell(): MachineCell {
     signalStack,
     spindle,
     atc,
+    wayLube,
     guardSensor: { panel: guardPanel, head: sensorFace, dust },
   };
 }
@@ -218,6 +250,28 @@ export function setSignalLights(
   apply(stack.red, red, 0x7f1d1d, 0xff2020);
   apply(stack.amber, amber, 0x92400e, 0xffb020);
   apply(stack.green, green, 0x14532d, 0x30ff50);
+}
+
+/** Drive the way-lube leak marker 0..1. */
+export function setWayLube(cell: MachineCell, amount: number): void {
+  const clamped = Math.max(0, Math.min(1, amount));
+  cell.wayLube.visible = clamped > 0.02;
+  const material = cell.wayLube.material as THREE.MeshStandardMaterial;
+  material.opacity = clamped * 0.9;
+  const scale = 0.4 + clamped * 0.9;
+  cell.wayLube.scale.set(1.4 * scale, 0.35 * scale, 0.8 * scale);
+}
+
+/** Drive the ATC carousel and freeze it when a jam is active. */
+export function setAtcState(cell: MachineCell, jammed: number, rotation: number): void {
+  cell.atc.rotation.y = rotation;
+  const intensity = Math.max(0, Math.min(1, jammed));
+  const disc = cell.atc.children[1];
+  if (disc instanceof THREE.Mesh) {
+    const material = disc.material as THREE.MeshStandardMaterial;
+    material.emissive.setHex(intensity > 0.02 ? 0x8f1d24 : 0x000000);
+    material.emissiveIntensity = intensity * 1.8;
+  }
 }
 
 /** Drive the guard-door sensor dust 0..1 (0 = clean/wiped). */

@@ -20,13 +20,14 @@ export async function recordComposite(
   durationSec: number,
   fps: number,
   onProgress?: (seconds: number) => void,
+  videoBitsPerSecond = 12_000_000,
 ): Promise<Blob> {
   const canvas = renderer.domElement as CapturableCanvas;
   const stream = canvas.captureStream?.(fps);
   if (!stream) throw new Error("canvas.captureStream not supported in this browser");
 
   const mimeType = pickWebMMime();
-  const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 12_000_000 });
+  const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond });
 
   const chunks: BlobPart[] = [];
   recorder.ondataavailable = (event: BlobEvent) => {

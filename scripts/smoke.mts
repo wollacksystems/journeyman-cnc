@@ -18,19 +18,90 @@
  * Usage: npm run smoke   (or: node scripts/smoke.mts; requires Node 23.6+)
  */
 
-import { chromium, type Browser, type Page } from "playwright-core";
+import { chromium, type Browser, type Download, type Page } from "playwright-core";
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { createWriteStream, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
+import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
 
 const BASE_URL = process.env.SMOKE_URL ?? "http://localhost:5178";
 const STATUS = "#capture-status";
 const DONE_PREFIX = "saved renders/";
 const HARD_TIMEOUT_MS = Number(process.env.SMOKE_TIMEOUT_MS ?? 2_400_000);
 const STALL_MS = Number(process.env.SMOKE_STALL_MS ?? 240_000);
+const EXPECTED_SCENARIOS = ["sensor-trip", "way-lube", "atc-jam"] as const;
+const EXPECTED_CAMERAS = ["side-a", "side-b", "head", "chest"] as const;
+const EXPECTED_FINAL = "saved renders/: 3 scenarios + 12 clips + manifests";
 const ARTIFACTS = join("scripts", "smoke-artifacts");
+/** Preview render size for PR-embeddable proof clips (production default is 1920x1080). */
+const PREVIEW_WIDTH = 640;
+const PREVIEW_HEIGHT = 360;
+/** Preview target bitrate (MediaRecorder webm) kept well under GitHub's 10 MB asset cap. */
+const PREVIEW_BITS_PER_SECOND = 900_000;
+
+function formatBytes(n: number): string {
+  if (n >= 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  if (n >= 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${n} B`;
+}
+
+/**
+ * Chromium flattens slashes in download names, so the app's
+ * "renders/<scenarioId>/<file>" target arrives as "renders_<scenarioId>_<file>".
+ * Restore the structured layout (scenario ids and cameras use hyphens only).
+ */
+function structuredPath(suggested: string): string {
+  const flat = suggested.replace(/\\/g, "/");
+  const match = /^renders_([a-z0-9-]+)_(.+)$/.exec(flat);
+  return match ? `renders/${match[1]}/${match[2]}` : flat;
+}
+
+/** Persist one browser download to the durable artifacts dir. */
+async function saveDownload(dl: Download): Promise<{ rel: string; size: number }> {
+  const rel = structuredPath(dl.suggestedFilename() ?? "download.bin");
+  const dest = join(ARTIFACTS, rel);
+  mkdirSync(dirname(dest), { recursive: true });
+  const out = createWriteStream(dest);
+  const stream = await dl.createReadStream();
+  if (!stream) throw new Error(`empty download stream for ${suggested}`);
+  await new Promise<void>((resolve, reject) => {
+    stream.pipe(out);
+    out.on("finish", () => resolve());
+    out.on("error", reject);
+    stream.on("error", reject);
+  });
+  return { rel, size: statSync(dest).size };
+}
+
+function validateFixtures(): void {
+  for (const scenarioId of EXPECTED_SCENARIOS) {
+    const fixture = JSON.parse(readFileSync(join("fixtures", `${scenarioId}.json`), "utf8")) as {
+      scenarioId?: string;
+      durationSec?: number;
+      fps?: number;
+      cameras?: string[];
+      beats?: unknown[];
+      narration?: unknown[];
+      lesson?: { title?: string; body?: string };
+    };
+    if (
+      fixture.scenarioId !== scenarioId ||
+      fixture.durationSec !== 50 ||
+      fixture.fps !== 30 ||
+      JSON.stringify(fixture.cameras) !== JSON.stringify(EXPECTED_CAMERAS) ||
+      !fixture.beats?.length ||
+      !fixture.narration?.length ||
+      !fixture.lesson?.title ||
+      !fixture.lesson.body
+    ) {
+      throw new Error(`fixture shape invalid: ${scenarioId}`);
+    }
+  }
+  say(
+    `fixtures ok: ${EXPECTED_SCENARIOS.length} scenarios, ${EXPECTED_CAMERAS.length} cameras each`,
+  );
+}
 
 const log: string[] = [];
 
@@ -128,6 +199,7 @@ async function runCaptureFlow(browser: Browser): Promise<boolean> {
     viewport: { width: 1024, height: 768 },
   });
   const page = await context.newPage();
+  let saved = 0;
 
   const pageErrors: string[] = [];
   page.on("pageerror", (err) => {
@@ -141,6 +213,19 @@ async function runCaptureFlow(browser: Browser): Promise<boolean> {
     }
   });
 
+  page.on("download", (dl) => {
+    void saveDownload(dl)
+      .then(({ rel, size }) => {
+        saved += 1;
+        say(`saved artifact: ${rel} (${formatBytes(size)})`);
+      })
+      .catch((err: unknown) =>
+        say(`ERR download: ${err instanceof Error ? err.message : String(err)}`),
+      );
+  });
+
+  validateFixtures();
+  say(`preview render size: ${PREVIEW_WIDTH}x${PREVIEW_HEIGHT} (production default 1920x1080)`);
   say("navigating...");
   await page.goto(BASE_URL, { waitUntil: "load", timeout: 60_000 });
 
@@ -167,6 +252,34 @@ async function runCaptureFlow(browser: Browser): Promise<boolean> {
   await page.waitForTimeout(1500);
   await screenshot(page, "01-scene-driven");
   say("scenario drives: two screenshots captured 1.5s apart");
+
+  // Preview pass: record a short GitHub-embeddable composite per scenario.
+  const select = page.locator("#scenario-select");
+  for (const scenarioId of EXPECTED_SCENARIOS) {
+    await select.selectOption(scenarioId);
+    say(`preview: selected ${scenarioId}, recording composite...`);
+    await recButton.click();
+    await page
+      .locator(STATUS)
+      .filter({ hasText: new RegExp(`^saved renders/${scenarioId}/composite\\.webm$`) })
+      .waitFor({ state: "visible", timeout: 300_000 });
+    say(`preview: saved ${scenarioId} composite`);
+    await screenshot(page, `04-preview-${scenarioId}`);
+  }
+  await select.selectOption(EXPECTED_SCENARIOS[0]!);
+
+  // Embed safety: each webm must fit GitHub's 10 MB attachment limit with margin.
+  const maxWebmBytes = (PREVIEW_BITS_PER_SECOND / 8) * 50 * 1.25;
+  for (const scenarioId of EXPECTED_SCENARIOS) {
+    const webmPath = join(ARTIFACTS, "renders", scenarioId, "composite.webm");
+    const size = statSync(webmPath).size;
+    if (size > maxWebmBytes) {
+      throw new Error(
+        `preview ${scenarioId} webm too large for PR embed: ${formatBytes(size)} > ${formatBytes(maxWebmBytes)}`,
+      );
+    }
+    say(`preview size ok: ${scenarioId} composite ${formatBytes(size)}`);
+  }
 
   say("clicking RENDER CORPUS...");
   await renderButton.click();
@@ -200,7 +313,7 @@ async function runCaptureFlow(browser: Browser): Promise<boolean> {
         lastCamera = camera;
         say(`camera start: ${camera}`);
       }
-      if (s.startsWith(DONE_PREFIX)) {
+      if (s === EXPECTED_FINAL) {
         finalStatus = s;
         ok = true;
         break;
@@ -210,8 +323,16 @@ async function runCaptureFlow(browser: Browser): Promise<boolean> {
   }
 
   await screenshot(page, "03-final");
-  say(ok ? `RESULT: PASS — ${finalStatus}` : "RESULT: FAIL — timed out");
+  say(
+    ok && finalStatus === EXPECTED_FINAL
+      ? `RESULT: PASS — ${finalStatus}`
+      : `RESULT: FAIL — ${finalStatus || "timed out"}`,
+  );
+  if (ok && finalStatus !== EXPECTED_FINAL) {
+    throw new Error(`partial corpus render: expected "${EXPECTED_FINAL}", got "${finalStatus}"`);
+  }
   if (pageErrors.length > 0) say(`page/console errors observed: ${pageErrors.length}`);
+  say(`durable artifacts: ${saved} file(s) under ${ARTIFACTS}`);
 
   await context.close().catch(() => {});
   return ok;

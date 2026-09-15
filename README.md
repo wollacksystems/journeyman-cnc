@@ -26,8 +26,9 @@ narration + cell timeline + lesson), a first scripted scenario (sensor-trip,
 20 s smoke), per-camera MP4 batch rendering via mediabunny (WebCodecs
 H.264/VP9/AV1 -> MP4, in-memory), a MediaRecorder composite webm, and a capture
 manifest with camera intrinsics + beat timeline + transcript (ground truth for
-ingest). Phase 3 stretches the sensor-trip beats to the locked 45-60 s and adds
-way-lube + ATC jam scenarios.
+ingest). Phase 3 - locked 50 s corpus: stretched sensor-trip plus way-lube and
+ATC jam scenarios, a registry-driven selector and corpus batch render, visible
+way-lube/ATC cell state, compact labeled fixtures, and headless scenario proof.
 
 Batch outputs land in gitignored `renders/<scenario-id>/`; small fixtures are
 committed. Feature work happens on the `synthetic-capture` branch (see
@@ -39,23 +40,30 @@ The dev toolbar (lower-left) exposes two captures:
 
 - `REC COMPOSITE` - real-time `canvas.captureStream` + `MediaRecorder` webm of
   the 6-viewport composite, wall-clock loop reset to t=0.
-- `RENDER CORPUS` - deterministic offline batch. For each production camera the
-  scenario is driven frame-by-frame (frame N always = sim time N / fps) and
-  encoded straight to MP4 by mediabunny's `CanvasSource` (keyframe every 1 s).
-  Saves `renders/<scenario-id>/{side-a,side-b,head,chest}.mp4` + `manifest.json`.
+- `RENDER CORPUS` - deterministic offline batch. For every registered production
+  scenario, each production camera is driven frame-by-frame (frame N always =
+  sim time N / fps) and encoded straight to MP4 by mediabunny's `CanvasSource`
+  (keyframe every 1 s). Saves `renders/<scenario-id>/{side-a,side-b,head,chest}.mp4`
+  - `manifest.json`. The default output is 1920x1080; `VITE_CAPTURE_WIDTH` and
+    `VITE_CAPTURE_HEIGHT` may be set for a faster low-resolution smoke run.
 
-The manifest records capture identity (UTC, engine version), per-camera
-intrinsics read back from the live rig, the beat/narration timeline (ground
-truth), and the lesson. That timeline is what the later ingest + demo app uses
-to label frames/embeddings and to seek clips during answers.
+The dev toolbar now includes a scenario selector. `RENDER CORPUS` renders all
+registered scenarios in order, writing four production-camera clips plus a
+manifest per scenario under `renders/<scenario-id>/`. `npm run verify:scenarios`
+checks registry order, 45-60 s duration, validation, fixture shape, and the
+sensor dust, way-lube, and ATC jam state transitions.
 
 ## Verification
 
 Headless smoke test (`npm run smoke`): with `npm run dev` running, launches a
 Playwright-managed Chromium (`npx playwright-core install chromium` once),
-asserts the capture UI wiring, triggers RENDER CORPUS, and treats the on-page
-status line `saved renders/<scenario>/: N clips + manifest` as the end-to-end
-pass signal. Requires Node 23.6+. On machines where Playwright's default
-launch handshake hangs (some EDR setups), the script auto-falls back to
-CDP-over-HTTP (`SMOKE_USE_CDP=1` forces it). Runs under Node, not Bun (Bun's
-runtime shim breaks Playwright's WebSocket connection).
+asserts the capture UI wiring, validates all committed fixtures, triggers the
+registry-wide RENDER CORPUS, and treats the exact on-page status line
+`saved renders/: 3 scenarios + 12 clips + manifests` as the end-to-end pass
+signal. Requires Node 23.6+. The smoke run persists every rendered artifact
+(gitignored) under `scripts/smoke-artifacts/renders/<scenario-id>/` instead of
+losing them to the browser download channel. For a fast, PR-embeddable run the
+smoke server loads `.env.smoke` (640x360 capture, 0.9 Mbps composite) via
+`--mode smoke`; production captures remain 1920x1080 at 12 Mbps. Each preview
+webm is asserted under GitHub's 10 MB attachment limit so it can be uploaded as
+a release asset and embedded inline in a PR.
