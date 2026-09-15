@@ -1,7 +1,7 @@
 {
   "name": "journeyman-sim",
   "private": true,
-  "version": "0.4.0",
+  "version": "0.6.0",
   "description": "Synthetic CNC training environment: multi-camera Three.js rig with scripted scenarios and a render-then-ingest proof pipeline.",
   "type": "module",
   "scripts": {
@@ -13,11 +13,12 @@
     "typecheck": "tsc --noEmit",
     "verify:rig": "esbuild scripts/verify-cam-rig.mts --bundle --platform=node --format=esm --external:three --outfile=scripts/verify-cam-rig.bundle.mjs --log-level=warning && node scripts/verify-cam-rig.bundle.mjs && rm scripts/verify-cam-rig.bundle.mjs",
     "verify:scenarios": "esbuild scripts/verify-scenarios.mts --bundle --platform=node --format=esm --outfile=scripts/verify-scenarios.bundle.mjs --log-level=warning && node scripts/verify-scenarios.bundle.mjs && rm scripts/verify-scenarios.bundle.mjs",
-    "verify:factory": "esbuild scripts/verify-factory.mts --bundle --platform=node --format=esm --external:three --outfile=scripts/verify-factory.bundle.mjs --log-level=warning && node scripts/verify-factory.bundle.mjs && rm scripts/verify-factory.bundle.mjs",
+    "verify:factory": "esbuild scripts/verify-factory.mts --bundle --platform=node --format=esm --external:three --external:esbuild --outfile=scripts/verify-factory.bundle.mjs --log-level=warning && node scripts/verify-factory.bundle.mjs && rm scripts/verify-factory.bundle.mjs",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "smoke": "node scripts/smoke.mts",
-    "factory:run": "node scripts/factory-run.mts"
+    "factory:run": "node scripts/factory-run.mts",
+    "corpus": "esbuild scripts/corpus.mts --bundle --platform=node --format=esm --outfile=scripts/corpus.cli.mjs --log-level=warning && node scripts/corpus.cli.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

@@ -73,6 +73,24 @@ export type {
 export type { FactoryCaptureManifest } from "./manifest";
 export type { CorpusExportSummary } from "./corpus-save";
 
+// Ingest reader: validate + stream corpora (headless-safe, DOM-free).
+export {
+  iterTrainingTuples,
+  readCorpusIndex,
+  readScenarioScript,
+  validateCorpusIndex,
+} from "./corpus-read";
+export type {
+  CorpusFilesystem,
+  CorpusProblem,
+  CorpusValidation,
+  TrainingTuple,
+} from "./corpus-read";
+
+// Corpus index JSON Schema (issue #9 schema milestone): the reusable,
+// tool-readable declaration of the index contract.
+export { corpusIndexJsonSchema } from "./corpus-schema";
+
 // Execution types (the values are internal; see the layer map above).
 export type { FactoryCaptureResult, FactoryRenderOptions } from "./render";
 export type { FactoryWorld, FactoryWorldOptions } from "./world";

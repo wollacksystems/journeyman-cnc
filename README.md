@@ -113,6 +113,40 @@ handle's effectful methods, so pure stages never import WebGL and the whole
 public surface imports cleanly under plain Node. Every barrel export is
 semver-contracted TSDoc'd API.
 
+The ingest reader (`readCorpus` / `validateCorpusIndex` / `iterTrainingTuples`,
+issues #8/#9) closes the loop on recall: it validates a corpus `index.json`
+structurally — schema/version gates, required fields, path invariants (no
+dot-dot escapes, correct `corpora/<seed>/` layout), seed ranges, and
+env/scenario cross-references — then streams typed `TrainingTuple`s (lesson
+labels + per-camera clip paths + script/manifest paths + regeneration seed)
+in plan order. File access is injected via the `CorpusFilesystem` port, so
+the same reader runs against Node `fs/promises` (scripts/CI/ingest) or an
+in-memory/fetch adapter (browser), and a tuple's `seed` regenerates its
+exported script exactly — the property that makes corpora replayable ground
+truth for training.
+
+The corpus index JSON Schema (issue #9 schema milestone) lives in
+`src/factory/corpus-schema.ts` as the exported `corpusIndexJsonSchema` const
+(draft 2020-12), emitted to the reusable `schemas/journeyman-corpus-index.v1.json`
+artifact. verify:factory pins the artifact byte-fresh against the const,
+validates generated fixtures on both sides (21 in-scope violations rejected;
+tolerated variations accepted by schema _and_ reader), and runs a drift
+matrix over the reader's 13 tamper mutations asserting which layer catches
+which violation — 8 by both, 5 document-level rules by the reader alone. The
+intended evolution (see the module's header note): if maintaining the schema
+and the walker by hand starts to hurt, declare the schema once in **Zod** and
+derive both artifacts from it (`zodToJsonSchema` for the schema file,
+`z.infer` for the reader's types); the drift check is what makes that
+migration safe to attempt.
+
+The corpus CLI (`npm run corpus -- <list|tuples|verify> --root <dir-containing-corpora/> --seed <n>`,
+issue #8 §4) inspects exported corpora from the shell using only the public
+barrel: `list [--json]` prints the scenario inventory, `tuples` streams
+JSONL training tuples for ingest piping, and `verify` checks every
+referenced artifact (present, non-empty, provenance-coherent) with exit
+codes suitable for CI. `--root` is the directory containing `corpora/`
+because index paths are project-root-relative.
+
 Dev controls (lower-left): `PLAN FACTORY` prints the corpus a seed will produce;
 `PREVIEW ENV` cycles the live canvas through the planned generated environments
 (rotated cell, palette, lighting + the generated scenario's beats); `RENDER
@@ -130,7 +164,12 @@ export layer (stable paths, complete index, seeds that replay every script,
 lessons carried for ingest labels, overwrite-in-place re-export), and the
 public-API contract (facade `plan()`/`describe()` equality with the engine
 layers, JSON round-trip replay, spec normalization, barrel surface, hidden
-internals, preview apply/restore).
+internals, preview apply/restore), and the ingest reader (fresh-index
+validation, plan-order tuples with full data, tuple-seed regeneration
+identity, 13 tamper classes rejected with located problem paths, and a real
+temp-dir export consumed back through a Node fs adapter), and the corpus
+JSON Schema (fresh emitted artifact, fixture batteries on both sides, and
+the reader/schema drift matrix).
 
 ## Verification
 

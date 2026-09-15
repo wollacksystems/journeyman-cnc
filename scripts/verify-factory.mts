@@ -32,6 +32,13 @@ import { validateScenario } from "../src/scenario/types.ts";
 import { ENGINE_VERSION } from "../src/version.ts";
 import * as factoryApi from "../src/factory/index.ts";
 import type { FactoryWorld } from "../src/factory/world.ts";
+import {
+  iterTrainingTuples,
+  readCorpusIndex,
+  readScenarioScript,
+  validateCorpusIndex,
+  type CorpusFilesystem,
+} from "../src/factory/corpus-read.ts";
 
 let failures = 0;
 function check(name: string, condition: boolean, detail: string): void {
@@ -507,6 +514,639 @@ check(
     applied[applied.length - 1] === LOCKED_ENV.id,
     `back to ${LOCKED_ENV.id}`,
   );
+}
+
+// ---------------------------------------------------------------------------
+// Ingest reader (issues #8/#9): validate exported indexes and stream typed
+// training tuples without knowing the on-disk layout. The in-memory map
+// below doubles as the browser-side CorpusFilesystem adapter example; the
+// disk check at the end exercises the Node adapter against a real export.
+// ---------------------------------------------------------------------------
+const readerIndex = buildCorpusIndex({
+  plan: corpusPlan,
+  clipsByScenario,
+  exportedUtc: "2026-09-15T00:00:00.000Z",
+});
+const readerJson = corpusJson(readerIndex);
+const memFiles = new Map<string, string>([
+  [corpusIndexPath(777), readerJson],
+  ...corpusPlan.jobs.map(
+    (job) =>
+      [
+        scenarioScriptPath(777, job.scenario.id),
+        corpusJson(buildScenarioScriptDoc(job, 777)),
+      ] as const,
+  ),
+]);
+const memFs: CorpusFilesystem = {
+  readFile: async (p) => {
+    const hit = memFiles.get(p);
+    if (hit === undefined) throw new Error(`missing: ${p}`);
+    return hit;
+  },
+};
+const readValidation = await readCorpusIndex(memFs, corpusIndexPath(777));
+check(
+  "reader validates a freshly built index",
+  readValidation.ok && readValidation.index !== null,
+  readValidation.ok
+    ? `${readValidation.problems.length} problems in ${readerIndex.scenarios.length}-scenario index`
+    : readValidation.problems.map((p) => `${p.at}: ${p.message}`).join("; "),
+);
+const readerTuples = readValidation.index ? [...iterTrainingTuples(readValidation.index)] : [];
+check(
+  "tuples stream per scenario in plan order with complete data",
+  readerTuples.length === corpusPlan.jobs.length &&
+    readerTuples.every(
+      (t, i) =>
+        t.scenarioId === corpusPlan.jobs[i]!.scenario.id &&
+        t.rootSeed === 777 &&
+        t.env.envId === corpusPlan.jobs[i]!.env.id &&
+        Object.keys(t.clips).length === 4 &&
+        t.lesson.title.length > 0 &&
+        t.seed > 0,
+    ),
+  `${readerTuples.length} tuples, 4 clips each`,
+);
+{
+  // The tuple's seed must regenerate the exported script exactly.
+  const firstTuple = readerTuples[0]!;
+  const doc = await readScenarioScript(memFs, firstTuple);
+  const job0 = corpusPlan.jobs[0]!;
+  const regenerated = generateScenario(job0.env, firstTuple.templateId, 50, job0.scenario.slot);
+  check(
+    "tuple seed replays its exported script (regeneration identity)",
+    doc.provenance.seed === firstTuple.seed &&
+      doc.provenance.rootSeed === 777 &&
+      doc.provenance.seed ===
+        scenarioSeedFor(job0.env, firstTuple.templateId, job0.scenario.slot) &&
+      JSON.stringify(doc.beats) === JSON.stringify(regenerated.beats),
+    `seed ${firstTuple.seed}, template ${firstTuple.templateId}`,
+  );
+}
+{
+  // Mutation battery: every corruption class the validator exists for.
+  const tampered = (mutate: (doc: Record<string, unknown>) => void): string => {
+    const clone = JSON.parse(readerJson) as Record<string, unknown>;
+    mutate(clone);
+    return validateCorpusIndex(JSON.stringify(clone)).ok ? "MISSED" : "caught";
+  };
+  const scenarioAt = (d: Record<string, unknown>): Record<string, unknown> =>
+    (d["scenarios"] as Record<string, unknown>[])[0]!;
+  const results = [
+    tampered((d) => {
+      d["schema"] = "other-corpus";
+    }),
+    tampered((d) => {
+      d["schemaVersion"] = 2;
+    }),
+    tampered((d) => {
+      (d["scenarios"] as unknown[]).splice(0, 1);
+    }),
+    tampered((d) => {
+      scenarioAt(d)["seed"] = -1;
+    }),
+    tampered((d) => {
+      scenarioAt(d)["envId"] = "env-nope";
+    }),
+    tampered((d) => {
+      scenarioAt(d)["script"] = "corpora/0000000777/scenarios/../../etc/passwd";
+    }),
+    tampered((d) => {
+      scenarioAt(d)["manifest"] = "renders/other.json";
+    }),
+    tampered((d) => {
+      scenarioAt(d)["clips"] = { front: "corpora/0000000777/clips/wrong/front.mp4" };
+    }),
+    tampered((d) => {
+      scenarioAt(d)["clips"] = {};
+    }),
+    tampered((d) => {
+      (d["environments"] as Record<string, unknown>[])[0]!["scenarioIds"] = [];
+    }),
+    tampered((d) => {
+      (d["environments"] as unknown[]).splice(0, 1);
+    }),
+    tampered((d) => {
+      d["exportedUtc"] = "not-a-date";
+    }),
+    tampered((d) => {
+      d["plan"] = { envCount: 1, perEnv: 1 };
+    }),
+  ];
+  check(
+    "reader rejects tampered indexes (schema, shape, seeds, xrefs, paths, counts)",
+    results.every((r) => r === "caught"),
+    `${results.filter((r) => r === "caught").length}/${results.length} caught`,
+  );
+  const located = JSON.parse(readerJson) as Record<string, unknown>;
+  scenarioAt(located)["seed"] = "zero";
+  const problems = validateCorpusIndex(JSON.stringify(located)).problems;
+  check(
+    "validation problems carry located paths",
+    problems.length >= 1 && problems.some((p) => p.at === "scenarios[0].seed"),
+    problems.map((p) => p.at).join(", "),
+  );
+}
+{
+  // Node adapter: write the corpus to a real temp dir (saveCorpus layout,
+  // empty clip stand-ins) and consume it back through the reader.
+  const { mkdtemp, writeFile, mkdir, rm, readFile } = await import("node:fs/promises");
+  const { join, dirname } = await import("node:path");
+  const { tmpdir } = await import("node:os");
+  const dir = await mkdtemp(join(tmpdir(), "corpus-read-"));
+  try {
+    const writeJson = async (path: string, value: unknown): Promise<void> => {
+      const full = join(dir, path);
+      await mkdir(dirname(full), { recursive: true });
+      await writeFile(full, corpusJson(value));
+    };
+    await writeJson(corpusIndexPath(777), readerIndex);
+    for (const job of corpusPlan.jobs) {
+      await writeJson(scenarioScriptPath(777, job.scenario.id), buildScenarioScriptDoc(job, 777));
+      await writeJson(clipManifestPath(777, job.scenario.id), { standby: true });
+      for (const camera of clipsByScenario[job.scenario.id] ?? []) {
+        const full = join(dir, clipPath(777, job.scenario.id, camera));
+        await mkdir(dirname(full), { recursive: true });
+        await writeFile(full, "clip-bytes");
+      }
+    }
+    const seenEnvs = new Set<string>();
+    for (const job of corpusPlan.jobs) {
+      if (seenEnvs.has(job.env.id)) continue;
+      seenEnvs.add(job.env.id);
+      await writeJson(envSpecPath(777, job.env.id), job.env);
+    }
+    const nodeFs: CorpusFilesystem = {
+      readFile: async (p) => await readFile(join(dir, p), "utf8"),
+    };
+    const diskValidation = await readCorpusIndex(nodeFs, corpusIndexPath(777));
+    const diskTuples = diskValidation.index ? [...iterTrainingTuples(diskValidation.index)] : [];
+    const diskScriptOk =
+      diskTuples[0] !== undefined &&
+      (await readScenarioScript(nodeFs, diskTuples[0])).provenance.rootSeed === 777;
+    check(
+      "reader consumes a corpus written to real disk",
+      diskValidation.ok && diskTuples.length === corpusPlan.jobs.length && diskScriptOk,
+      `${diskTuples.length} tuples from temp export`,
+    );
+    {
+      // A cross-planted or tampered script file must be caught by the
+      // provenance check inside readScenarioScript (review hardening).
+      const tuple0 = readerTuples[0]!;
+      const forged = JSON.parse(memFiles.get(tuple0.scriptPath)!) as Record<string, unknown>;
+      (forged["provenance"] as Record<string, unknown>)["seed"] = 1;
+      const forgedFs: CorpusFilesystem = {
+        readFile: async (p) =>
+          p === tuple0.scriptPath ? JSON.stringify(forged) : memFiles.get(p)!,
+      };
+      let threw = false;
+      try {
+        await readScenarioScript(forgedFs, tuple0);
+      } catch (e) {
+        threw = String(e).includes("provenance mismatch") && String(e).includes("seed 1 !=");
+      }
+      check(
+        "readScenarioScript rejects a script whose provenance contradicts the tuple",
+        threw,
+        "cross-planted script file rejected",
+      );
+    }
+    {
+      // Iterating a hand-built doc with a broken env xref must throw, not
+      // silently drop tuples (review hardening).
+      const broken = JSON.parse(readerJson) as Record<string, unknown>;
+      (broken["scenarios"] as Record<string, unknown>[])[0]!["envId"] = "env-nope";
+      let threw = false;
+      try {
+        for (const t of iterTrainingTuples(
+          broken as unknown as Parameters<typeof iterTrainingTuples>[0],
+        )) {
+          void t;
+        }
+      } catch (e) {
+        threw = String(e).includes('unknown environment "env-nope"');
+      }
+      check(
+        "iterTrainingTuples throws on an unknown env instead of dropping tuples",
+        threw,
+        "contract is self-enforcing",
+      );
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Corpus JSON Schema (issue #9 schema milestone): the reusable schema at
+// schemas/journeyman-corpus-index.v1.json is emitted from the exported
+// corpusIndexJsonSchema const, and a mini JSON-Schema evaluator keeps the
+// schema and the reader's structural walker from drifting apart: an explicit
+// matrix of which layer catches which violation, plus fixture batteries on
+// both sides.
+// ---------------------------------------------------------------------------
+type SchemaNode = Record<string, unknown>;
+function schemaViolations(
+  schema: SchemaNode,
+  value: unknown,
+  at: string,
+  out: string[],
+  rootDefs?: Record<string, SchemaNode>,
+): void {
+  const defs = rootDefs ?? ((schema["$defs"] ?? {}) as Record<string, SchemaNode>);
+  const ref = schema["$ref"];
+  if (typeof ref === "string") {
+    const resolved = ref.startsWith("#/$defs/") ? defs[ref.slice("#/$defs/".length)] : undefined;
+    if (!resolved) {
+      out.push(`${at}: unresolved $ref ${ref}`);
+      return;
+    }
+    schemaViolations(resolved, value, at, out, defs);
+    return;
+  }
+  if ("const" in schema && JSON.stringify(value) !== JSON.stringify(schema["const"])) {
+    out.push(`${at}: const mismatch`);
+    return;
+  }
+  if ("enum" in schema) {
+    const allowed = schema["enum"] as unknown[];
+    if (!allowed.some((v) => JSON.stringify(v) === JSON.stringify(value))) {
+      out.push(`${at}: enum mismatch`);
+    }
+  }
+  const type = schema["type"] as string | undefined;
+  if (typeof type === "string") {
+    const matches =
+      (type === "object" && typeof value === "object" && value !== null && !Array.isArray(value)) ||
+      (type === "array" && Array.isArray(value)) ||
+      (type === "string" && typeof value === "string") ||
+      (type === "integer" && typeof value === "number" && Number.isInteger(value)) ||
+      (type === "number" && typeof value === "number");
+    if (!matches) {
+      out.push(`${at}: expected ${type}`);
+      return;
+    }
+  }
+  if (typeof value === "string") {
+    const minLen = schema["minLength"];
+    if (typeof minLen === "number" && value.length < minLen) out.push(`${at}: minLength`);
+    const pattern = schema["pattern"];
+    if (typeof pattern === "string" && !new RegExp(pattern).test(value)) out.push(`${at}: pattern`);
+    // "format": "date-time" is intentionally annotation-only here (RFC 9457
+    // makes format non-assertive without a vocab); the reader enforces it.
+  }
+  if (typeof value === "number") {
+    const min = schema["minimum"];
+    if (typeof min === "number" && value < min) out.push(`${at}: minimum`);
+  }
+  if (Array.isArray(value)) {
+    const minItems = schema["minItems"];
+    if (typeof minItems === "number" && value.length < minItems) out.push(`${at}: minItems`);
+    const items = schema["items"];
+    if (items && typeof items === "object") {
+      value.forEach((v, i) => schemaViolations(items as SchemaNode, v, `${at}[${i}]`, out, defs));
+    }
+  }
+  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+    const record = value as Record<string, unknown>;
+    for (const key of (schema["required"] as string[] | undefined) ?? []) {
+      if (!(key in record)) out.push(`${at}.${key}: required`);
+    }
+    const minProps = schema["minProperties"];
+    if (typeof minProps === "number" && Object.keys(record).length < minProps) {
+      out.push(`${at}: minProperties`);
+    }
+    const props = (schema["properties"] ?? {}) as Record<string, SchemaNode>;
+    const additional = schema["additionalProperties"];
+    for (const [key, v] of Object.entries(record)) {
+      if (key in props) schemaViolations(props[key]!, v, `${at}.${key}`, out, defs);
+      else if (additional === false) out.push(`${at}.${key}: additionalProperties`);
+      else if (additional && typeof additional === "object") {
+        schemaViolations(additional as SchemaNode, v, `${at}.${key}`, out, defs);
+      }
+    }
+  }
+}
+const schemaCheck = (doc: unknown): string[] => {
+  const out: string[] = [];
+  schemaViolations(factoryApi.corpusIndexJsonSchema as unknown as SchemaNode, doc, "$", out);
+  return out;
+};
+
+// The checked-in schema file is generated from the const — never hand-edited.
+{
+  const { readFile } = await import("node:fs/promises");
+  // Normalize CRLF: the artifact is pinned to LF via .gitattributes, but a
+  // checkout made before that pin may still have CRLF on disk.
+  const onDisk = (await readFile("schemas/journeyman-corpus-index.v1.json", "utf8")).replace(
+    /\r\n/g,
+    "\n",
+  );
+  check(
+    "schemas/*.json is fresh (emitted from corpusIndexJsonSchema)",
+    onDisk === corpusJson(factoryApi.corpusIndexJsonSchema),
+    "byte-identical to the exported const",
+  );
+}
+check(
+  "schema accepts a freshly built index",
+  schemaCheck(JSON.parse(readerJson)).length === 0,
+  `${readerIndex.scenarios.length}-scenario index validates clean`,
+);
+{
+  // Reader-accepted variations must stay schema-accepted (no overfitting to
+  // one corpus shape): a second base corpus plus tolerated mutations.
+  const plan2 = planFactory(42, { envCount: 2, perEnv: 1 });
+  const variedCameras: Record<string, string[]> = {};
+  plan2.jobs.forEach((job, i) => {
+    variedCameras[job.scenario.id] = i === 0 ? ["front", "wrist"] : ["head"];
+  });
+  const varied = JSON.parse(
+    corpusJson(
+      buildCorpusIndex({
+        plan: plan2,
+        clipsByScenario: variedCameras,
+        exportedUtc: "2026-01-02T03:04:05.000Z",
+      }),
+    ),
+  ) as Record<string, unknown>;
+  const env0 = (varied["environments"] as Record<string, unknown>[])[0]!;
+  env0["machineRotation"] = 2.7;
+  env0["palette"] = "midnight-shop";
+  env0["variant"] = "graveyard-crew";
+  varied["engineVersion"] = "0.0.1-test";
+  const scen0 = (varied["scenarios"] as Record<string, unknown>[])[0]!;
+  scen0["templateId"] = "custom-mode";
+  (scen0["lesson"] as Record<string, unknown>)["title"] = "Custom lesson";
+  check(
+    "schema + reader agree on tolerated variations (shape, extra cameras, labels)",
+    schemaCheck(varied).length === 0 && validateCorpusIndex(JSON.stringify(varied)).ok,
+    `varied corpus accepted by both`,
+  );
+}
+{
+  // Violations within the schema's declared scope must be rejected.
+  const bad = (mutate: (doc: Record<string, unknown>) => void): unknown => {
+    const clone = JSON.parse(readerJson) as Record<string, unknown>;
+    mutate(clone);
+    return clone;
+  };
+  const scen0 = (d: Record<string, unknown>): Record<string, unknown> =>
+    (d["scenarios"] as Record<string, unknown>[])[0]!;
+  const env0 = (d: Record<string, unknown>): Record<string, unknown> =>
+    (d["environments"] as Record<string, unknown>[])[0]!;
+  const cases: Array<[string, Record<string, unknown>]> = [
+    ["wrong schema const", bad((d) => (d["schema"] = "nope"))],
+    ["wrong schemaVersion", bad((d) => (d["schemaVersion"] = 2))],
+    ["negative rootSeed", bad((d) => (d["rootSeed"] = -1))],
+    ["fractional rootSeed", bad((d) => (d["rootSeed"] = 777.5))],
+    ["empty engineVersion", bad((d) => (d["engineVersion"] = ""))],
+    ["plan.perEnv 0", bad((d) => (d["plan"] = { envCount: 1, perEnv: 0 }))],
+    ["plan missing count", bad((d) => delete (d["plan"] as Record<string, unknown>)["envCount"])],
+    ["env missing required", bad((d) => delete env0(d)["variant"])],
+    ["env atcSide not ±1", bad((d) => (env0(d)["atcSide"] = 2))],
+    ["env seed 0", bad((d) => (env0(d)["seed"] = 0))],
+    ["spec wrong subtree", bad((d) => (env0(d)["spec"] = "corpora/0000000777/envx/env-00.json"))],
+    [
+      "backslash spec",
+      bad((d) => (env0(d)["spec"] = "corpora\\\\0000000777\\\\envs\\\\env-00.json")),
+    ],
+    ["scenario missing lesson", bad((d) => delete scen0(d)["lesson"])],
+    [
+      "lesson title empty",
+      bad((d) => ((scen0(d)["lesson"] as Record<string, unknown>)["title"] = "")),
+    ],
+    ["scenario seed fractional", bad((d) => (scen0(d)["seed"] = 1.5))],
+    ["clips empty", bad((d) => (scen0(d)["clips"] = {}))],
+    [
+      "clip wrong directory",
+      bad(
+        (d) =>
+          (scen0(d)["clips"] = { front: "corpora/0000000777/other/sensor-trip-env-00/front.mp4" }),
+      ),
+    ],
+    [
+      "manifest wrong name",
+      bad(
+        (d) => (scen0(d)["manifest"] = "corpora/0000000777/clips/sensor-trip-env-00/manifold.json"),
+      ),
+    ],
+    [
+      "script dot-dot escape",
+      bad((d) => (scen0(d)["script"] = "corpora/0000000777/scenarios/../env-00.json")),
+    ],
+    ["additional top-level prop", bad((d) => (d["extra"] = 1))],
+    ["scenarios empty array", bad((d) => (d["scenarios"] = []))],
+  ];
+  const missed = cases.filter(([, doc]) => schemaCheck(doc).length === 0).map(([name]) => name);
+  check(
+    "schema rejects fixture violations within its scope",
+    missed.length === 0,
+    missed.length === 0
+      ? `${cases.length}/${cases.length} rejected`
+      : `MISSED: ${missed.join("; ")}`,
+  );
+}
+{
+  // Drift matrix: for each reader-battery mutation, exactly one layer is the
+  // catcher. Cross-reference/count/format rules are the reader's (the schema
+  // is per-item and intentionally tolerates them); everything else the
+  // schema catches too. If either implementation changes, this breaks and
+  // the matrix + the Zod derivation note must be revisited.
+  const matrix: Array<[string, boolean, boolean]> = [];
+  const mutateDoc = (mutate: (doc: Record<string, unknown>) => void): string => {
+    const clone = JSON.parse(readerJson) as Record<string, unknown>;
+    mutate(clone);
+    return JSON.stringify(clone);
+  };
+  const scen0 = (d: Record<string, unknown>): Record<string, unknown> =>
+    (d["scenarios"] as Record<string, unknown>[])[0]!;
+  // Expected catchers: (reader, schema). Per-item rules (consts, integer/
+  // minimum seeds, subtree patterns, minProperties) are caught by BOTH;
+  // document-level rules (counts, cross-refs, per-env order, date format,
+  // clip-subtree coherence) are the reader's alone — the schema is per-item
+  // and RFC-tolerant on format.
+  const R = true;
+  const S = false;
+  const mutations: Array<[string, (d: Record<string, unknown>) => void, boolean, boolean]> = [
+    ["wrong schema", (d) => (d["schema"] = "nope"), R, !S],
+    ["wrong version", (d) => (d["schemaVersion"] = 2), R, !S],
+    ["dropped scenario", (d) => (d["scenarios"] as unknown[]).splice(0, 1), R, S],
+    ["negative seed", (d) => (scen0(d)["seed"] = -1), R, !S],
+    ["unknown env xref", (d) => (scen0(d)["envId"] = "env-nope"), R, S],
+    [
+      "dot-dot script",
+      (d) => (scen0(d)["script"] = "corpora/0000000777/scenarios/../x.json"),
+      R,
+      !S,
+    ],
+    ["wrong manifest", (d) => (scen0(d)["manifest"] = "renders/x.json"), R, !S],
+    [
+      "wrong clip dir",
+      (d) => (scen0(d)["clips"] = { front: "corpora/0000000777/clips/wrong/front.mp4" }),
+      R,
+      S,
+    ],
+    ["empty clips", (d) => (scen0(d)["clips"] = {}), R, !S],
+    [
+      "empty env scenarioIds",
+      (d) => ((d["environments"] as Record<string, unknown>[])[0]!["scenarioIds"] = []),
+      R,
+      S,
+    ],
+    ["dropped environment", (d) => (d["environments"] as unknown[]).splice(0, 1), R, S],
+    ["bad exportedUtc", (d) => (d["exportedUtc"] = "not-a-date"), R, S],
+    ["count-mismatch plan", (d) => (d["plan"] = { envCount: 1, perEnv: 1 }), R, S],
+  ];
+  for (const [name, mutate, readerRejects, schemaRejects] of mutations) {
+    const json = mutateDoc(mutate);
+    const readerRejectsActual = !validateCorpusIndex(json).ok;
+    const schemaRejectsActual = schemaCheck(JSON.parse(json)).length > 0;
+    matrix.push([
+      name,
+      readerRejectsActual === readerRejects && schemaRejectsActual === schemaRejects,
+      readerRejectsActual,
+      schemaRejectsActual,
+    ]);
+  }
+  const drifted = matrix.filter(([, ok]) => !ok).map(([name]) => name);
+  check(
+    "reader/schema drift matrix holds (13 mutations, expected catcher per layer)",
+    drifted.length === 0,
+    drifted.length === 0
+      ? matrix
+          .map(
+            ([name, , r, s]) =>
+              `${name}:${r ? "reader" : ""}${r && s ? "+" : ""}${s ? "schema" : ""}`,
+          )
+          .join(", ")
+      : `DRIFTED: ${drifted.join("; ")}`,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Corpus CLI (issue #8 §4): spawn scripts/corpus.mts against a real temp
+// corpus directory — the public-surface consumer story end to end: list,
+// tuples (JSONL), and verify, including failure modes.
+// ---------------------------------------------------------------------------
+{
+  const { mkdtemp, writeFile, mkdir, rm, readFile } = await import("node:fs/promises");
+  const { join, dirname } = await import("node:path");
+  const { tmpdir } = await import("node:os");
+  const { spawnSync } = await import("node:child_process");
+  // Bundle the CLI once (esbuild resolves the barrel's internal imports;
+  // plain-Node type stripping requires explicit extensions the src tree
+  // does not use), then spawn the bundle for each invocation.
+  const esbuild = (await import("esbuild")).default;
+  await esbuild.build({
+    entryPoints: ["scripts/corpus.mts"],
+    bundle: true,
+    platform: "node",
+    format: "esm",
+    outfile: "scripts/corpus.cli.mjs",
+    logLevel: "silent",
+  });
+  const dir = await mkdtemp(join(tmpdir(), "corpus-cli-"));
+  const corpusDir = join(dir, "corpora", "0000000777");
+  try {
+    const writeJson = async (path: string, value: unknown): Promise<void> => {
+      const full = join(dir, path);
+      await mkdir(dirname(full), { recursive: true });
+      await writeFile(full, corpusJson(value));
+    };
+    await writeJson(corpusIndexPath(777), readerIndex);
+    for (const job of corpusPlan.jobs) {
+      await writeJson(scenarioScriptPath(777, job.scenario.id), buildScenarioScriptDoc(job, 777));
+      await writeJson(clipManifestPath(777, job.scenario.id), { standby: true });
+      for (const camera of clipsByScenario[job.scenario.id] ?? []) {
+        const full = join(dir, clipPath(777, job.scenario.id, camera));
+        await mkdir(dirname(full), { recursive: true });
+        await writeFile(full, "clip-bytes");
+      }
+    }
+    const seenEnvs = new Set<string>();
+    for (const job of corpusPlan.jobs) {
+      if (seenEnvs.has(job.env.id)) continue;
+      seenEnvs.add(job.env.id);
+      await writeJson(envSpecPath(777, job.env.id), job.env);
+    }
+    const runCli = (args: string[]): { status: number; stdout: string; stderr: string } => {
+      const result = spawnSync(process.execPath, ["scripts/corpus.cli.mjs", ...args], {
+        cwd: process.cwd(),
+        encoding: "utf8",
+      });
+      return {
+        status: result.status ?? -1,
+        stdout: result.stdout ?? "",
+        stderr: result.stderr ?? "",
+      };
+    };
+    const listed = runCli(["list", "--root", dir, "--seed", "777"]);
+    const listOk =
+      listed.status === 0 &&
+      listed.stdout.includes("corpus 777") &&
+      listed.stdout.includes("sensor-trip-env-00") &&
+      listed.stdout.includes("atc-jam-env-01") &&
+      listed.stdout.includes("lesson:");
+    check(
+      "corpus CLI lists scenarios + artifacts",
+      listOk,
+      `exit ${listed.status}, ${listed.stdout.split("\n").length} lines`,
+    );
+    const listedJson = runCli(["list", "--root", dir, "--seed", "777", "--json"]);
+    const parsedList = JSON.parse(listedJson.stdout) as { scenarios: unknown[] };
+    check(
+      "corpus CLI --json emits the index document",
+      listedJson.status === 0 && parsedList.scenarios.length === 6,
+      "6 scenarios parsed from stdout",
+    );
+    const tuplesOut = runCli(["tuples", "--root", dir, "--seed", "777"]);
+    const jsonLines = tuplesOut.stdout
+      .split("\n")
+      .filter((line) => line.trim().length > 0)
+      .map((line) => JSON.parse(line) as { scenarioId: string; lesson: { title: string } });
+    check(
+      "corpus CLI tuples emits one JSONL training tuple per scenario",
+      tuplesOut.status === 0 &&
+        jsonLines.length === 6 &&
+        jsonLines.every((t) => t.scenarioId.length > 0 && t.lesson.title.length > 0),
+      `${jsonLines.length} JSONL lines`,
+    );
+    const verified = runCli(["verify", "--root", dir, "--seed", "777"]);
+    check(
+      "corpus CLI verify passes a complete corpus",
+      verified.status === 0 &&
+        verified.stdout.includes("corpus 777 OK") &&
+        verified.stdout.includes("38 artifacts"),
+      `exit ${verified.status} stdout=${verified.stdout.trim()} stderr=${verified.stderr.slice(0, 300)}`,
+    );
+    // Failure modes: corrupt an artifact (verify must fail), then the index.
+    const firstScenario = readerIndex.scenarios[0]!;
+    const firstCamera = Object.keys(firstScenario.clips)[0]!;
+    await writeFile(join(dir, firstScenario.clips[firstCamera]!), "");
+    const emptyClip = runCli(["verify", "--root", dir, "--seed", "777"]);
+    check(
+      "corpus CLI verify rejects an empty clip artifact",
+      emptyClip.status === 1 && emptyClip.stderr.includes("(empty)"),
+      `exit ${emptyClip.status}`,
+    );
+    await writeFile(join(dir, firstScenario.clips[firstCamera]!), "clip-bytes");
+    const brokenIndex = JSON.parse(await readFile(join(corpusDir, "index.json"), "utf8")) as Record<
+      string,
+      unknown
+    >;
+    (brokenIndex["scenarios"] as Record<string, unknown>[])[2]!["seed"] = -3;
+    await writeFile(join(corpusDir, "index.json"), JSON.stringify(brokenIndex, null, 2));
+    const invalidIndex = runCli(["list", "--root", dir, "--seed", "777"]);
+    check(
+      "corpus CLI fails with exit 1 on an invalid index",
+      invalidIndex.status === 1 && invalidIndex.stderr.includes("invalid corpus index"),
+      `exit ${invalidIndex.status}`,
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 }
 
 console.log(`\n${failures === 0 ? "ALL FACTORY CHECKS PASSED" : `${failures} CHECK(S) FAILED`}`);
