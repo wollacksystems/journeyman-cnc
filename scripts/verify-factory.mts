@@ -690,6 +690,49 @@ check(
       diskValidation.ok && diskTuples.length === corpusPlan.jobs.length && diskScriptOk,
       `${diskTuples.length} tuples from temp export`,
     );
+    {
+      // A cross-planted or tampered script file must be caught by the
+      // provenance check inside readScenarioScript (review hardening).
+      const tuple0 = readerTuples[0]!;
+      const forged = JSON.parse(memFiles.get(tuple0.scriptPath)!) as Record<string, unknown>;
+      (forged["provenance"] as Record<string, unknown>)["seed"] = 1;
+      const forgedFs: CorpusFilesystem = {
+        readFile: async (p) =>
+          p === tuple0.scriptPath ? JSON.stringify(forged) : memFiles.get(p)!,
+      };
+      let threw = false;
+      try {
+        await readScenarioScript(forgedFs, tuple0);
+      } catch (e) {
+        threw = String(e).includes("provenance mismatch") && String(e).includes("seed 1 !=");
+      }
+      check(
+        "readScenarioScript rejects a script whose provenance contradicts the tuple",
+        threw,
+        "cross-planted script file rejected",
+      );
+    }
+    {
+      // Iterating a hand-built doc with a broken env xref must throw, not
+      // silently drop tuples (review hardening).
+      const broken = JSON.parse(readerJson) as Record<string, unknown>;
+      (broken["scenarios"] as Record<string, unknown>[])[0]!["envId"] = "env-nope";
+      let threw = false;
+      try {
+        for (const t of iterTrainingTuples(
+          broken as unknown as Parameters<typeof iterTrainingTuples>[0],
+        )) {
+          void t;
+        }
+      } catch (e) {
+        threw = String(e).includes('unknown environment "env-nope"');
+      }
+      check(
+        "iterTrainingTuples throws on an unknown env instead of dropping tuples",
+        threw,
+        "contract is self-enforcing",
+      );
+    }
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

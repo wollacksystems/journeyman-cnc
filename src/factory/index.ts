@@ -76,7 +76,6 @@ export type { CorpusExportSummary } from "./corpus-save";
 // Ingest reader: validate + stream corpora (headless-safe, DOM-free).
 export {
   iterTrainingTuples,
-  readCorpus,
   readCorpusIndex,
   readScenarioScript,
   validateCorpusIndex,

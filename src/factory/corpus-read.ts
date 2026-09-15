@@ -302,7 +302,11 @@ export function* iterTrainingTuples(index: CorpusIndex): Generator<TrainingTuple
   const envById = new Map(index.environments.map((e) => [e.envId, e]));
   for (const s of index.scenarios as readonly CorpusIndexScenario[]) {
     const env = envById.get(s.envId);
-    if (!env) continue; // validated xrefs make this unreachable
+    if (!env) {
+      // Unreachable for a validated index; throwing keeps the contract
+      // self-enforcing for anyone iterating a hand-built document.
+      throw new Error(`corpus index references unknown environment "${s.envId}"`);
+    }
     yield {
       scenarioId: s.scenarioId,
       rootSeed: index.rootSeed,
@@ -317,28 +321,28 @@ export function* iterTrainingTuples(index: CorpusIndex): Generator<TrainingTuple
   }
 }
 
-/** Read and return one scenario's ground-truth script document. */
+/**
+ * Read one scenario's ground-truth script document and check it against the
+ * tuple: the script's provenance (rootSeed, envId, seed, templateId) must
+ * match what the index claims. Guards against tampered or cross-planted
+ * script files — the index is validated, but artifacts on disk are not
+ * trusted blindly.
+ */
 export async function readScenarioScript(
   fs: CorpusFilesystem,
   tuple: TrainingTuple,
 ): Promise<ScenarioScriptDoc> {
-  return JSON.parse(await fs.readFile(tuple.scriptPath)) as ScenarioScriptDoc;
+  const doc = JSON.parse(await fs.readFile(tuple.scriptPath)) as ScenarioScriptDoc;
+  const p = doc.provenance;
+  const mismatches: string[] = [];
+  if (p.rootSeed !== tuple.rootSeed) mismatches.push(`rootSeed ${p.rootSeed} != ${tuple.rootSeed}`);
+  if (p.envId !== tuple.env.envId) mismatches.push(`envId ${p.envId} != ${tuple.env.envId}`);
+  if (p.seed !== tuple.seed) mismatches.push(`seed ${p.seed} != ${tuple.seed}`);
+  if (p.templateId !== tuple.templateId) {
+    mismatches.push(`templateId ${p.templateId} != ${tuple.templateId}`);
+  }
+  if (mismatches.length > 0) {
+    throw new Error(`script provenance mismatch for ${tuple.scenarioId}: ${mismatches.join("; ")}`);
+  }
+  return doc;
 }
-
-/**
- * Convenience: validate, then tuple-iterate, failing fast with all problems
- * listed. Returns an empty iterable when the index is invalid — callers
- * that need the reason should use {@link readCorpusIndex} first.
- */
-export function readCorpus(json: string): {
-  problems: CorpusProblem[];
-  tuples: () => Generator<TrainingTuple, void, void>;
-} {
-  const validation = validateCorpusIndex(json);
-  return {
-    problems: validation.problems,
-    tuples: () => (validation.index ? iterTrainingTuples(validation.index) : emptyTuples()),
-  };
-}
-
-function* emptyTuples(): Generator<TrainingTuple, void, void> {}
