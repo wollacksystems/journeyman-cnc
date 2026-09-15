@@ -22,11 +22,11 @@
  */
 
 import * as THREE from "three";
-import { createAvatar } from "../src/avatar.ts";
-import { applyScenario } from "../src/sim/apply.ts";
-import { driveScenario, type ScenarioState } from "../src/scenario/drive.ts";
-import { sensorTripScenario } from "../src/scenario/sensor-trip.ts";
-import type { MachineCell } from "../src/cell.ts";
+import { createAvatar } from "@/avatar.ts";
+import { applyScenario } from "@/sim/apply.ts";
+import { driveScenario, type ScenarioState } from "@/scenario/drive.ts";
+import { sensorTripScenario } from "@/scenario/sensor-trip.ts";
+import type { MachineCell } from "@/cell.ts";
 
 let failures = 0;
 

@@ -3,15 +3,15 @@
  * generated scenario validity, provenance manifests, and the environment
  * binding that lets templates run in any generated environment.
  */
-import { planFactory } from "../src/factory/plan.ts";
+import { planFactory } from "@/factory/plan.ts";
 import {
   generateScenario,
   scenarioSeedFor,
   TEMPLATE_IDS,
   TEMPLATE_REGISTRY,
-} from "../src/factory/scenario-gen.ts";
-import { generateEnvironment, LOCKED_ENV, toWorld } from "../src/factory/environment.ts";
-import { buildFactoryManifest } from "../src/factory/manifest.ts";
+} from "@/factory/scenario-gen.ts";
+import { generateEnvironment, LOCKED_ENV, toWorld } from "@/factory/environment.ts";
+import { buildFactoryManifest } from "@/factory/manifest.ts";
 import {
   buildCorpusIndex,
   buildScenarioScriptDoc,
@@ -23,22 +23,22 @@ import {
   corpusRootPath,
   envSpecPath,
   scenarioScriptPath,
-} from "../src/factory/corpus.ts";
-import { createRng } from "../src/factory/rng.ts";
-import { createMachineCell } from "../src/cell.ts";
-import { CameraRig } from "../src/rig.ts";
-import { driveScenario } from "../src/scenario/drive.ts";
-import { validateScenario } from "../src/scenario/types.ts";
-import { ENGINE_VERSION } from "../src/version.ts";
-import * as factoryApi from "../src/factory/index.ts";
-import type { FactoryWorld } from "../src/factory/world.ts";
+} from "@/factory/corpus.ts";
+import { createRng } from "@/factory/rng.ts";
+import { createMachineCell } from "@/cell.ts";
+import { CameraRig } from "@/rig.ts";
+import { driveScenario } from "@/scenario/drive.ts";
+import { validateScenario } from "@/scenario/types.ts";
+import { ENGINE_VERSION } from "@/version.ts";
+import * as factoryApi from "@/factory/index.ts";
+import type { FactoryWorld } from "@/factory/world.ts";
 import {
   iterTrainingTuples,
   readCorpusIndex,
   readScenarioScript,
   validateCorpusIndex,
   type CorpusFilesystem,
-} from "../src/factory/corpus-read.ts";
+} from "@/factory/corpus-read.ts";
 
 let failures = 0;
 function check(name: string, condition: boolean, detail: string): void {
@@ -1147,6 +1147,36 @@ check(
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+}
+
+{
+  // Issue #12: root-reaching imports use the "@/..." alias; relative
+  // ../src/ chains must not regrow. Scanned on disk because esbuild resolves
+  // specifiers away, so the bundle cannot see them.
+  const { readdir, readFile: readText } = await import("node:fs/promises");
+  const { join } = await import("node:path");
+  const walk = async (dir: string): Promise<string[]> => {
+    const out: string[] = [];
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) out.push(...(await walk(full)));
+      else if (entry.isFile() && /\.(ts|mts)$/.test(entry.name)) out.push(full);
+    }
+    return out;
+  };
+  const offenders: string[] = [];
+  for (const root of ["src", "scripts"]) {
+    for (const file of await walk(join(process.cwd(), root))) {
+      if (/(?:from\s*|import\s*\()\s*["'](?:\.\.\/)+src\//.test(await readText(file, "utf8"))) {
+        offenders.push(file);
+      }
+    }
+  }
+  check(
+    "no ../src/ relative import chains regrow (use the @/ alias)",
+    offenders.length === 0,
+    offenders.length === 0 ? "0 root-reaching relative chains" : offenders.join(", "),
+  );
 }
 
 console.log(`\n${failures === 0 ? "ALL FACTORY CHECKS PASSED" : `${failures} CHECK(S) FAILED`}`);
