@@ -837,7 +837,12 @@ const schemaCheck = (doc: unknown): string[] => {
 // The checked-in schema file is generated from the const — never hand-edited.
 {
   const { readFile } = await import("node:fs/promises");
-  const onDisk = await readFile("schemas/journeyman-corpus-index.v1.json", "utf8");
+  // Normalize CRLF: the artifact is pinned to LF via .gitattributes, but a
+  // checkout made before that pin may still have CRLF on disk.
+  const onDisk = (await readFile("schemas/journeyman-corpus-index.v1.json", "utf8")).replace(
+    /\r\n/g,
+    "\n",
+  );
   check(
     "schemas/*.json is fresh (emitted from corpusIndexJsonSchema)",
     onDisk === corpusJson(factoryApi.corpusIndexJsonSchema),

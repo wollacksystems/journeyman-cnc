@@ -1,0 +1,2 @@
+# Generated schema artifact: keep byte-stable across platforms (freshness check)
+schemas/*.json text eol=lf
