@@ -11,11 +11,8 @@ import { captureBatch, downloadBlob, CAPTURE_HEIGHT, CAPTURE_WIDTH } from "./cap
 import { recordComposite } from "./capture/composite";
 import { buildCaptureManifest } from "./manifest";
 import { LOCKED_ENV } from "./factory/environment";
-import { planFactory, type FactoryPlan } from "./factory/plan";
+import { createSimulation, type Simulation } from "./factory/index";
 import { createFactoryWorld } from "./factory/world";
-import { renderFactoryJob } from "./factory/render";
-import { saveCorpus } from "./factory/corpus-save";
-import type { FactoryCaptureResult } from "./factory/render";
 
 const FPS = 30;
 
@@ -184,9 +181,10 @@ if (import.meta.env.DEV) {
   const factoryPlanBtn = document.createElement("button");
   factoryPlanBtn.textContent = "PLAN FACTORY";
   factoryPlanBtn.addEventListener("click", () => {
-    factoryPlan = readFactoryPlan();
+    factorySim = readFactorySim();
+    const described = factorySim.describe();
     statusFor(
-      `planned seed ${factoryPlan.rootSeed}: ${factoryPlan.jobs.length} scenarios across ${factoryPlan.envCount} envs — ${factoryPlan.jobs.map((j) => j.scenario.id).join(", ")}`,
+      `planned seed ${described.seed}: ${described.scenarioCount} scenarios across ${described.envCount} envs — ${described.environments.flatMap((e) => e.scenarios.map((s) => s.id)).join(", ")}`,
     );
   });
 
@@ -203,19 +201,24 @@ if (import.meta.env.DEV) {
   factoryPreviewBtn.textContent = "PREVIEW ENV";
   factoryPreviewBtn.title = "Cycle the live view through the planned generated environments";
   factoryPreviewBtn.addEventListener("click", () => {
-    factoryPlan = factoryPlan ?? readFactoryPlan();
-    if (factoryPlan.jobs.length === 0) return;
-    factoryPreviewIndex = (factoryPreviewIndex + 1) % factoryPlan.jobs.length;
-    const job = factoryPlan.jobs[factoryPreviewIndex];
-    if (!job) return;
-    factoryWorld.setEnv(job.env);
-    selectedScenario = job.scenario;
-    clock.reset();
-    statusFor(
-      `previewing ${factoryPreviewIndex + 1}/${factoryPlan.jobs.length}: ${job.scenario.id} (${job.env.variant}, ${job.env.palette.name}, rot ${(job.env.machineRotation * 180) / Math.PI}°)`,
-    );
+    factorySim = factorySim ?? readFactorySim();
+    const sim = factorySim;
+    const jobs = sim.plan().jobs;
+    if (jobs.length === 0) return;
+    factoryPreviewDispose?.();
+    factoryPreviewIndex = (factoryPreviewIndex + 1) % jobs.length;
+    factoryPreviewDispose = sim.preview(factoryWorld, factoryPreviewIndex, {
+      onJob: (job) => {
+        selectedScenario = job.scenario;
+        clock.reset();
+        statusFor(
+          `previewing ${factoryPreviewIndex + 1}/${jobs.length}: ${job.scenario.id} (${job.env.variant}, ${job.env.palette.name}, rot ${(job.env.machineRotation * 180) / Math.PI}°)`,
+        );
+      },
+    });
   });
   let factoryPreviewIndex = -1;
+  let factoryPreviewDispose: (() => void) | null = null;
 
   factoryBox.append(
     factorySeed,
@@ -227,11 +230,14 @@ if (import.meta.env.DEV) {
   );
   document.body.appendChild(factoryBox);
 
-  let factoryPlan: FactoryPlan | null = null;
-  const readFactoryPlan = (): FactoryPlan =>
-    planFactory(Number(factorySeed.value) >>> 0, {
-      envCount: Math.max(1, Number(factoryEnvs.value) || 1),
-      perEnv: Math.max(1, Number(factoryPerEnv.value) || 1),
+  let factorySim: Simulation | null = null;
+  const readFactorySim = (): Simulation =>
+    createSimulation({
+      seed: Number(factorySeed.value) >>> 0,
+      shape: {
+        envCount: Math.max(1, Number(factoryEnvs.value) || 1),
+        perEnv: Math.max(1, Number(factoryPerEnv.value) || 1),
+      },
     });
 
   let busy = false;
@@ -342,28 +348,20 @@ if (import.meta.env.DEV) {
     setBusy(true);
     renderer.setAnimationLoop(null); // factory drives its own frames
     try {
-      const plan = factoryPlan ?? readFactoryPlan();
-      factoryPlan = plan;
+      const sim = factorySim ?? readFactorySim();
+      factorySim = sim;
       statusFor(
-        `factory seed ${plan.rootSeed}: rendering ${plan.jobs.length} generated scenario(s)...`,
+        `factory seed ${sim.spec.seed}: rendering ${sim.describe().scenarioCount} generated scenario(s)...`,
       );
-      const results: FactoryCaptureResult[] = [];
-      for (let ji = 0; ji < plan.jobs.length; ji++) {
-        const job = plan.jobs[ji];
-        if (!job) throw new Error(`factory job ${ji} missing`);
-        const result = await renderFactoryJob(factoryWorld, job, {
-          rootSeed: plan.rootSeed,
-          onProgress: (p) => {
-            statusFor(
-              `${job.scenario.id}: ${p.camera} ${p.frame}/${p.totalFrames} (camera ${p.cameraIndex + 1}/${p.cameraTotal})`,
-            );
-          },
-        });
-        results.push(result);
-        statusFor(`rendered ${job.scenario.id} (${ji + 1}/${plan.jobs.length})`);
-      }
-      statusFor(`exporting corpus ${plan.rootSeed}: ${results.length} scenario(s)...`);
-      const summary = await saveCorpus(plan, results);
+      const out = await sim.render(factoryWorld, {
+        onProgress: (p, job) => {
+          statusFor(
+            `${job.scenario.id}: ${p.camera} ${p.frame}/${p.totalFrames} (camera ${p.cameraIndex + 1}/${p.cameraTotal})`,
+          );
+        },
+      });
+      statusFor(`exporting corpus ${sim.spec.seed}: ${out.results.length} scenario(s)...`);
+      const summary = await sim.export(sim.plan(), out.results);
       statusFor(
         `saved ${summary.corpusRoot}: ${summary.scenarioCount} scenarios, ${summary.clipCount} clips + index.json (seed ${summary.rootSeed})`,
       );

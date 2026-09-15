@@ -30,6 +30,8 @@ import { CameraRig } from "../src/rig.ts";
 import { driveScenario } from "../src/scenario/drive.ts";
 import { validateScenario } from "../src/scenario/types.ts";
 import { ENGINE_VERSION } from "../src/version.ts";
+import * as factoryApi from "../src/factory/index.ts";
+import type { FactoryWorld } from "../src/factory/world.ts";
 
 let failures = 0;
 function check(name: string, condition: boolean, detail: string): void {
@@ -395,6 +397,117 @@ check(
   corpusJson({ b: 1, a: 2 }) === '{\n  "b": 1,\n  "a": 2\n}\n',
   "2-space pretty print with trailing newline",
 );
+
+// ---------------------------------------------------------------------------
+// Public API contract (issue #9): the createSimulation facade + barrel are
+// the package surface. These checks run the barrel through plain Node — the
+// import itself proves the pure layers stay headless-safe (no eager DOM,
+// WebGL, or import.meta.env access), which the lazy facade loading provides.
+// ---------------------------------------------------------------------------
+const sim = factoryApi.createSimulation({ seed: 2026, shape: { envCount: 2, perEnv: 3 } });
+const facadePlan = sim.plan();
+const directPlan = planFactory(2026, { envCount: 2, perEnv: 3 });
+check(
+  "facade plan() matches planFactory exactly",
+  JSON.stringify(facadePlan) === JSON.stringify(directPlan),
+  `${facadePlan.jobs.length} jobs, seed ${facadePlan.rootSeed}`,
+);
+const described = sim.describe();
+check(
+  "facade describe() summarizes the plan as pure data",
+  described.scenarioCount === 6 &&
+    described.environments.length === 2 &&
+    described.environments.every((e) => e.scenarios.length === 3) &&
+    described.environments[0]!.scenarios[0]!.lesson.length > 0,
+  `6 scenarios / 2 envs; first lesson "${described.environments[0]!.scenarios[0]!.lesson}"`,
+);
+check(
+  "same spec -> byte-identical describe() (determinism through the facade)",
+  JSON.stringify(
+    factoryApi.createSimulation({ seed: 2026, shape: { envCount: 2, perEnv: 3 } }).describe(),
+  ) === JSON.stringify(described),
+  "two handles, identical summaries",
+);
+check(
+  "spec is JSON-serializable and replays through the facade",
+  JSON.stringify(
+    factoryApi.createSimulation(JSON.parse(JSON.stringify(sim.spec)) as typeof sim.spec).describe(),
+  ) === JSON.stringify(described),
+  "JSON round-trip preserves the corpus",
+);
+const normalized = factoryApi.createSimulation({
+  seed: -5,
+  shape: { envCount: 0, perEnv: Number.NaN },
+});
+check(
+  "spec is normalized (shape floors at 1, seed unsigned)",
+  normalized.spec.shape.envCount === 1 &&
+    normalized.spec.shape.perEnv === 1 &&
+    normalized.spec.seed === 4294967291 &&
+    normalized.plan().jobs.length === 1,
+  `seed ${normalized.spec.seed}, 1x1 corpus`,
+);
+const requiredExports = [
+  "createSimulation",
+  "planFactory",
+  "DEFAULT_FACTORY_OPTIONS",
+  "TEMPLATE_IDS",
+  "TEMPLATE_REGISTRY",
+  "generateScenario",
+  "scenarioSeedFor",
+  "generateEnvironment",
+  "LOCKED_ENV",
+  "ENV_PALETTES",
+  "buildCorpusIndex",
+  "buildScenarioScriptDoc",
+  "corpusDirName",
+  "corpusJson",
+  "createRng",
+  "hashSeed",
+];
+const missingExports = requiredExports.filter((k) => !(k in factoryApi));
+check(
+  "barrel exposes the documented public surface",
+  missingExports.length === 0,
+  missingExports.length === 0
+    ? `${requiredExports.length} exports present`
+    : `missing: ${missingExports.join(", ")}`,
+);
+check(
+  "barrel hides engine internals behind the handle",
+  !("renderFactoryJob" in factoryApi) &&
+    !("saveCorpus" in factoryApi) &&
+    !("createFactoryWorld" in factoryApi) &&
+    typeof sim.render === "function" &&
+    typeof sim.export === "function" &&
+    typeof sim.renderAndExport === "function",
+  "engine values unexported; effectful methods on the handle",
+);
+{
+  // Preview is the pure step-through affordance: applies one planned env,
+  // disposer restores. Exercised against a recording stub world.
+  const applied: string[] = [];
+  const stubWorld = {
+    env: LOCKED_ENV,
+    setEnv(env: typeof LOCKED_ENV): void {
+      applied.push(env.id);
+    },
+  } as unknown as FactoryWorld;
+  const restore = sim.preview(stubWorld, 0);
+  const appliedJob = applied[applied.length - 1];
+  const previewOk = applied.length === 1 && appliedJob === facadePlan.jobs[0]!.env.id;
+  restore();
+  check(
+    "preview applies the indexed planned environment",
+    previewOk,
+    `applied [${applied.join(", ")}] before dispose`,
+  );
+  check(
+    "preview disposer restores the previous environment",
+    applied[applied.length - 1] === LOCKED_ENV.id,
+    `back to ${LOCKED_ENV.id}`,
+  );
+}
 
 console.log(`\n${failures === 0 ? "ALL FACTORY CHECKS PASSED" : `${failures} CHECK(S) FAILED`}`);
 process.exit(failures === 0 ? 0 : 1);

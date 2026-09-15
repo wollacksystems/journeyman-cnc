@@ -9,9 +9,14 @@ import { driveScenario } from "../scenario/drive";
 import { applyScenario } from "../sim/apply";
 import { pickVideoCodec } from "./probe";
 
-/** Locked production capture size (see README approach: 1080p / 30 fps). */
-export const CAPTURE_WIDTH = Number(import.meta.env.VITE_CAPTURE_WIDTH ?? 1920);
-export const CAPTURE_HEIGHT = Number(import.meta.env.VITE_CAPTURE_HEIGHT ?? 1080);
+/**
+ * Locked production capture size (see README approach: 1080p / 30 fps).
+ * import.meta.env is optional-chained so these constants evaluate in plain
+ * Node ESM too (headless scripts import this module through the factory
+ * barrel; there import.meta.env is undefined and the defaults apply).
+ */
+export const CAPTURE_WIDTH = Number(import.meta.env?.VITE_CAPTURE_WIDTH ?? 1920);
+export const CAPTURE_HEIGHT = Number(import.meta.env?.VITE_CAPTURE_HEIGHT ?? 1080);
 
 export interface BatchOptions {
   scenario: ScenarioDef;
@@ -60,7 +65,7 @@ function renderFrameAt(
  * returned as blobs for the caller to save under renders/.
  */
 export async function captureBatch(options: BatchOptions): Promise<BatchResult> {
-  if (!import.meta.env.DEV) {
+  if (!import.meta.env?.DEV) {
     // Batch capture is a dev/tooling affordance; keep it out of the demo build.
     throw new Error("RENDER CORPUS is a dev-only action");
   }

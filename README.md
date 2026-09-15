@@ -97,6 +97,22 @@ corpus generator built from layered specs (`src/factory/`):
   re-exporting a seed overwrites in place and ingest can key on paths as
   stable recall identities. The index downloads last, certifying completeness.
 
+### Public API (`src/factory/index.ts`, issue #9)
+
+The package surface is the barrel. `createSimulation({ seed, shape })` returns
+a `Simulation` handle whose layers derive every artifact from the seed alone:
+`describe()` (what will this seed produce? pure data) → `plan()` (deterministic
+execution plan) → `preview(world, i)` (step the live canvas through planned
+environments; returns a restore disposer) → `render(world)` (footage; the
+explicit effectful boundary) → `export(plan, results)` (stable on-disk
+corpus) — or `renderAndExport()` for the composition. Specs are
+JSON-serializable: a checked-in spec replays to the identical corpus on any
+machine. Engine internals (`world`, `render`, `corpus-save`, `rng`, the
+capture pipeline) are not barrel exports — they load lazily behind the
+handle's effectful methods, so pure stages never import WebGL and the whole
+public surface imports cleanly under plain Node. Every barrel export is
+semver-contracted TSDoc'd API.
+
 Dev controls (lower-left): `PLAN FACTORY` prints the corpus a seed will produce;
 `PREVIEW ENV` cycles the live canvas through the planned generated environments
 (rotated cell, palette, lighting + the generated scenario's beats); `RENDER
@@ -111,7 +127,10 @@ ATC-side anchor flipping + pod mirroring, slot-repeat divergence, world binding
 (`faultWorld == toWorld(env, machine-frame anchor)`), environment variety,
 provenance manifest blocks, `LOCKED_ENV`/cell-builder parity, and the corpus
 export layer (stable paths, complete index, seeds that replay every script,
-lessons carried for ingest labels, overwrite-in-place re-export).
+lessons carried for ingest labels, overwrite-in-place re-export), and the
+public-API contract (facade `plan()`/`describe()` equality with the engine
+layers, JSON round-trip replay, spec normalization, barrel surface, hidden
+internals, preview apply/restore).
 
 ## Verification
 
