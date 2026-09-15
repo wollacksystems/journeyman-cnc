@@ -1025,5 +1025,129 @@ check(
   );
 }
 
+// ---------------------------------------------------------------------------
+// Corpus CLI (issue #8 §4): spawn scripts/corpus.mts against a real temp
+// corpus directory — the public-surface consumer story end to end: list,
+// tuples (JSONL), and verify, including failure modes.
+// ---------------------------------------------------------------------------
+{
+  const { mkdtemp, writeFile, mkdir, rm, readFile } = await import("node:fs/promises");
+  const { join, dirname } = await import("node:path");
+  const { tmpdir } = await import("node:os");
+  const { spawnSync } = await import("node:child_process");
+  // Bundle the CLI once (esbuild resolves the barrel's internal imports;
+  // plain-Node type stripping requires explicit extensions the src tree
+  // does not use), then spawn the bundle for each invocation.
+  const esbuild = (await import("esbuild")).default;
+  await esbuild.build({
+    entryPoints: ["scripts/corpus.mts"],
+    bundle: true,
+    platform: "node",
+    format: "esm",
+    outfile: "scripts/corpus.cli.mjs",
+    logLevel: "silent",
+  });
+  const dir = await mkdtemp(join(tmpdir(), "corpus-cli-"));
+  const corpusDir = join(dir, "corpora", "0000000777");
+  try {
+    const writeJson = async (path: string, value: unknown): Promise<void> => {
+      const full = join(dir, path);
+      await mkdir(dirname(full), { recursive: true });
+      await writeFile(full, corpusJson(value));
+    };
+    await writeJson(corpusIndexPath(777), readerIndex);
+    for (const job of corpusPlan.jobs) {
+      await writeJson(scenarioScriptPath(777, job.scenario.id), buildScenarioScriptDoc(job, 777));
+      await writeJson(clipManifestPath(777, job.scenario.id), { standby: true });
+      for (const camera of clipsByScenario[job.scenario.id] ?? []) {
+        const full = join(dir, clipPath(777, job.scenario.id, camera));
+        await mkdir(dirname(full), { recursive: true });
+        await writeFile(full, "clip-bytes");
+      }
+    }
+    const seenEnvs = new Set<string>();
+    for (const job of corpusPlan.jobs) {
+      if (seenEnvs.has(job.env.id)) continue;
+      seenEnvs.add(job.env.id);
+      await writeJson(envSpecPath(777, job.env.id), job.env);
+    }
+    const runCli = (args: string[]): { status: number; stdout: string; stderr: string } => {
+      const result = spawnSync(process.execPath, ["scripts/corpus.cli.mjs", ...args], {
+        cwd: process.cwd(),
+        encoding: "utf8",
+      });
+      return {
+        status: result.status ?? -1,
+        stdout: result.stdout ?? "",
+        stderr: result.stderr ?? "",
+      };
+    };
+    const listed = runCli(["list", "--root", dir, "--seed", "777"]);
+    const listOk =
+      listed.status === 0 &&
+      listed.stdout.includes("corpus 777") &&
+      listed.stdout.includes("sensor-trip-env-00") &&
+      listed.stdout.includes("atc-jam-env-01") &&
+      listed.stdout.includes("lesson:");
+    check(
+      "corpus CLI lists scenarios + artifacts",
+      listOk,
+      `exit ${listed.status}, ${listed.stdout.split("\n").length} lines`,
+    );
+    const listedJson = runCli(["list", "--root", dir, "--seed", "777", "--json"]);
+    const parsedList = JSON.parse(listedJson.stdout) as { scenarios: unknown[] };
+    check(
+      "corpus CLI --json emits the index document",
+      listedJson.status === 0 && parsedList.scenarios.length === 6,
+      "6 scenarios parsed from stdout",
+    );
+    const tuplesOut = runCli(["tuples", "--root", dir, "--seed", "777"]);
+    const jsonLines = tuplesOut.stdout
+      .split("\n")
+      .filter((line) => line.trim().length > 0)
+      .map((line) => JSON.parse(line) as { scenarioId: string; lesson: { title: string } });
+    check(
+      "corpus CLI tuples emits one JSONL training tuple per scenario",
+      tuplesOut.status === 0 &&
+        jsonLines.length === 6 &&
+        jsonLines.every((t) => t.scenarioId.length > 0 && t.lesson.title.length > 0),
+      `${jsonLines.length} JSONL lines`,
+    );
+    const verified = runCli(["verify", "--root", dir, "--seed", "777"]);
+    check(
+      "corpus CLI verify passes a complete corpus",
+      verified.status === 0 &&
+        verified.stdout.includes("corpus 777 OK") &&
+        verified.stdout.includes("38 artifacts"),
+      `exit ${verified.status} stdout=${verified.stdout.trim()} stderr=${verified.stderr.slice(0, 300)}`,
+    );
+    // Failure modes: corrupt an artifact (verify must fail), then the index.
+    const firstScenario = readerIndex.scenarios[0]!;
+    const firstCamera = Object.keys(firstScenario.clips)[0]!;
+    await writeFile(join(dir, firstScenario.clips[firstCamera]!), "");
+    const emptyClip = runCli(["verify", "--root", dir, "--seed", "777"]);
+    check(
+      "corpus CLI verify rejects an empty clip artifact",
+      emptyClip.status === 1 && emptyClip.stderr.includes("(empty)"),
+      `exit ${emptyClip.status}`,
+    );
+    await writeFile(join(dir, firstScenario.clips[firstCamera]!), "clip-bytes");
+    const brokenIndex = JSON.parse(await readFile(join(corpusDir, "index.json"), "utf8")) as Record<
+      string,
+      unknown
+    >;
+    (brokenIndex["scenarios"] as Record<string, unknown>[])[2]!["seed"] = -3;
+    await writeFile(join(corpusDir, "index.json"), JSON.stringify(brokenIndex, null, 2));
+    const invalidIndex = runCli(["list", "--root", dir, "--seed", "777"]);
+    check(
+      "corpus CLI fails with exit 1 on an invalid index",
+      invalidIndex.status === 1 && invalidIndex.stderr.includes("invalid corpus index"),
+      `exit ${invalidIndex.status}`,
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
 console.log(`\n${failures === 0 ? "ALL FACTORY CHECKS PASSED" : `${failures} CHECK(S) FAILED`}`);
 process.exit(failures === 0 ? 0 : 1);
