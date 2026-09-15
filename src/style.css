@@ -119,3 +119,50 @@ body {
   border-radius: 6px;
   padding: 4px 10px;
 }
+
+/* Dev-only factory panel: seeded corpus planning + generation. */
+#factory-box {
+  position: fixed;
+  left: 10px;
+  bottom: 78px;
+  z-index: 20;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+#factory-box input,
+#factory-box button {
+  font:
+    600 11px ui-monospace,
+    "Cascadia Mono",
+    Consolas,
+    monospace;
+  letter-spacing: 0.06em;
+  color: #d8dee6;
+  background: rgba(11, 13, 16, 0.8);
+  border: 1px solid #3a4150;
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+#factory-box input {
+  width: 56px;
+  color: #8fa3bf;
+}
+
+#factory-box button {
+  cursor: pointer;
+  color: #b0c4d8;
+}
+
+#factory-box button:hover:not(:disabled) {
+  border-color: #8fa3bf;
+  color: #ffffff;
+}
+
+#factory-box button:disabled,
+#factory-box input:disabled {
+  opacity: 0.45;
+  cursor: default;
+}

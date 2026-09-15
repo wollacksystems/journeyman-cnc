@@ -34,6 +34,11 @@ Batch outputs land in gitignored `renders/<scenario-id>/`; small fixtures are
 committed. Feature work happens on the `synthetic-capture` branch (see
 `worktrees/` conventions in the parent workspace).
 
+Phase 4 - factory of sims (v0.2.0): the singleton simulator became a generator.
+A seeded planner produces whole corpora of environments and scenario scripts as
+data, rendered through the same deterministic capture pipeline with full
+provenance manifests for recall (see "Factory of sims" below).
+
 ## Phase 2 capture flow (dev controls)
 
 The dev toolbar (lower-left) exposes two captures:
@@ -53,6 +58,61 @@ manifest per scenario under `renders/<scenario-id>/`. `npm run verify:scenarios`
 checks registry order, 45-60 s duration, validation, fixture shape, and the
 sensor dust, way-lube, and ATC jam state transitions.
 
+## Factory of sims
+
+The app is no longer one hardcoded cell with a fixed scenario registry; it is a
+corpus generator built from layered specs (`src/factory/`):
+
+- `rng.ts` - pure mulberry32 seeded RNG. Factory contract: a root seed fully
+  determines the corpus - same seed, byte-identical specs (geometry, beat
+  timings, narration picks), so generated footage is reproducible ground truth.
+- `environment.ts` - `EnvSpec` + `generateEnvironment(seed)`: whole-room
+  orientation (4 yaws), ATC pod side, shop-floor palette, work light, and fog.
+  Scenario scripts stay authored in the machine frame and map into world space
+  via `toWorld`, so any template runs in any environment unmodified.
+  `LOCKED_ENV` reproduces the original Phase-0 look exactly.
+- `vocab.ts` + `scenario-gen.ts` - parametric twins of all three locked failure
+  modes (sensor-trip, way-lube, atc-jam) in a template registry: seeded
+  narration picks from ground-truth-preserving banks plus beat-timing jitter.
+  ATC-jam anchors flip with the environment's ATC side so they track the
+  mirrored pod. Output is a plain `ScenarioDef`, so drive/apply/capture run
+  generated scenarios unmodified.
+- `plan.ts` - `planFactory(rootSeed, { envCount, perEnv })`: seed -> environments
+  -> per-scenario sub-seeds. `perEnv` cycles through every template, so
+  `perEnv > 1` produces genuinely different failure modes per environment (and
+  seeded slot repeats when it exceeds the template count). Pure data, no
+  DOM/WebGL - headlessly testable.
+- `world.ts` / `render.ts` / `manifest.ts` - one renderer + one scene shared
+  across all jobs (cell rebuilt per environment), the existing batch pipeline
+  per job, and a `FactoryCaptureManifest` adding `environment` (id, seed,
+  variant, rotation, ATC side, palette) and `factory` (generator, engine
+  version, template, root seed, timestamp) provenance blocks for ingest recall.
+- `corpus.ts` / `corpus-save.ts` - stable on-disk export for the ingest
+  pipeline (v0.3.0). RENDER FACTORY now writes `corpora/<rootSeed padded to
+10>/`: `index.json` (the ingest entry point: seeds, plan options, per-
+  scenario clip/manifest/script paths, lessons), `envs/<env-id>.json`,
+  `scenarios/<scenario-id>.json` (ground-truth script + provenance), and
+  `clips/<scenario-id>/{camera}.mp4 + manifest.json`. Paths are a pure
+  function of (root seed, env id, scenario id, camera) - no timestamps - so
+  re-exporting a seed overwrites in place and ingest can key on paths as
+  stable recall identities. The index downloads last, certifying completeness.
+
+Dev controls (lower-left): `PLAN FACTORY` prints the corpus a seed will produce;
+`PREVIEW ENV` cycles the live canvas through the planned generated environments
+(rotated cell, palette, lighting + the generated scenario's beats); `RENDER
+FACTORY` renders every generated job (per-camera MP4s + provenance manifest
+under `renders/<scenario-id>/`). The generated scenario dropdown entries are
+the same objects the planner emits.
+
+`npm run verify:factory` proves determinism (same seed -> identical plans;
+different seeds diverge), generated-scenario validity + corpus shape, template
+cycling, per-mode cell-state transitions driven headlessly (dust, leak, jam),
+ATC-side anchor flipping + pod mirroring, slot-repeat divergence, world binding
+(`faultWorld == toWorld(env, machine-frame anchor)`), environment variety,
+provenance manifest blocks, `LOCKED_ENV`/cell-builder parity, and the corpus
+export layer (stable paths, complete index, seeds that replay every script,
+lessons carried for ingest labels, overwrite-in-place re-export).
+
 ## Verification
 
 Headless smoke test (`npm run smoke`): with `npm run dev` running, launches a
@@ -67,3 +127,14 @@ smoke server loads `.env.smoke` (640x360 capture, 0.9 Mbps composite) via
 `--mode smoke`; production captures remain 1920x1080 at 12 Mbps. Each preview
 webm is asserted under GitHub's 10 MB attachment limit so it can be uploaded as
 a release asset and embedded inline in a PR.
+
+Headless factory driver (`npm run factory:run`): produces a complete generated
+corpus in Chromium without touching the dev UI. Same browser strategy as the
+smoke test (with the CDP fallback for locked-down machines); fills the factory
+panel (seed / envs / perEnv via `FACTORY_RUN_SEED`, `FACTORY_RUN_ENVS`,
+`FACTORY_RUN_PER_ENV`), asserts the planned-corpus status line, triggers RENDER
+FACTORY, waits for `saved corpora/<rootSeedPadded10>: N scenarios, M clips +
+index.json`, then validates the exported corpus on disk under
+`scripts/factory-artifacts/` (index schema, root seed, scenario count, lesson
+presence, and every referenced artifact non-empty). Point
+`FACTORY_RUN_URL` at any dev server; ~3 min per scenario at 640x360.

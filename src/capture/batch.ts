@@ -136,5 +136,8 @@ export function downloadBlob(blob: Blob, path: string): void {
   document.body.appendChild(a);
   a.click();
   a.remove();
-  URL.revokeObjectURL(url);
+  // Revoke on a delay: an immediate revoke can cancel the browser's download
+  // start when many downloads fire back-to-back (corpus export). Leaked URLs
+  // are reclaimed by the delay; blobs are small and this is dev-only.
+  setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }

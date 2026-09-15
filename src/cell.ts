@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import type { EnvPalette } from "./factory/environment";
 
 /**
  * CNC cell built from primitives: floor, enclosure walls, a VMC-style machine
@@ -25,17 +26,24 @@ export interface MachineCell {
   };
 }
 
-const steel = new THREE.MeshStandardMaterial({ color: 0x6b7280, roughness: 0.55, metalness: 0.35 });
-const darkSteel = new THREE.MeshStandardMaterial({
-  color: 0x374151,
-  roughness: 0.6,
-  metalness: 0.4,
-});
-const tableMat = new THREE.MeshStandardMaterial({
-  color: 0x9ca3af,
-  roughness: 0.4,
-  metalness: 0.55,
-});
+/**
+ * Optional environment styling for the cell builder. Omitted fields fall back
+ * to the locked Phase 0 palette, so `createMachineCell()` with no arguments
+ * produces exactly the original cell.
+ */
+export interface CellOptions {
+  palette?: Partial<EnvPalette>;
+  /** Which side of the column the ATC pod mounts on (machine frame ±X). */
+  atcSide?: 1 | -1;
+}
+
+const defaultPalette = {
+  floor: 0x2b2f36,
+  wall: 0x3f4754,
+  machine: 0x6b7280,
+  machineDark: 0x374151,
+  accent: 0x9ca3af,
+} as const;
 
 function box(
   w: number,
@@ -68,21 +76,41 @@ function cyl(
   return m;
 }
 
-export function createMachineCell(): MachineCell {
+export function createMachineCell(options?: CellOptions): MachineCell {
+  const palette = { ...defaultPalette, ...options?.palette };
+  const atcSide = options?.atcSide ?? 1;
+  // Per-call material instances (previously module-level shared singletons)
+  // so generated environments can restyle the cell without cross-talk.
+  const steel = new THREE.MeshStandardMaterial({
+    color: palette.machine,
+    roughness: 0.55,
+    metalness: 0.35,
+  });
+  const darkSteel = new THREE.MeshStandardMaterial({
+    color: palette.machineDark,
+    roughness: 0.6,
+    metalness: 0.4,
+  });
+  const tableMat = new THREE.MeshStandardMaterial({
+    color: palette.accent,
+    roughness: 0.4,
+    metalness: 0.55,
+  });
+
   const root = new THREE.Group();
   root.name = "machine-cell";
 
   // Floor.
   const floor = new THREE.Mesh(
     new THREE.PlaneGeometry(24, 24),
-    new THREE.MeshStandardMaterial({ color: 0x2b2f36, roughness: 0.95 }),
+    new THREE.MeshStandardMaterial({ color: palette.floor, roughness: 0.95 }),
   );
   floor.rotation.x = -Math.PI / 2;
   floor.receiveShadow = true;
   root.add(floor);
 
   // Enclosure walls (back + two sides, low front so cameras see in).
-  const wallMat = new THREE.MeshStandardMaterial({ color: 0x3f4754, roughness: 0.9 });
+  const wallMat = new THREE.MeshStandardMaterial({ color: palette.wall, roughness: 0.9 });
   const backWall = box(12, 3.4, 0.2, wallMat, 0, 1.7, -4.5);
   const leftWall = box(0.2, 3.4, 9, wallMat, -6, 1.7, 0);
   const rightWall = box(0.2, 3.4, 9, wallMat, 6, 1.7, 0);
@@ -123,7 +151,7 @@ export function createMachineCell(): MachineCell {
   // ATC pod: umbrella-style tool carousel beside the column.
   const atc = new THREE.Group();
   atc.name = "atc";
-  atc.position.set(2.1, 0, -1.0);
+  atc.position.set(2.1 * atcSide, 0, -1.0);
   const atcBase = cyl(0.5, 0.6, 0.9, darkSteel, 0, 0.45, 0);
   // Own material instance: setAtcState drives the jam glow on this disc and
   // must not tint every shared-steel mesh in the cell red.
