@@ -39,3 +39,5 @@ jobs:
           npm run verify:factory
       - name: Build
         run: npm run build
+      - name: Generate API docs (validity gate)
+        run: npm run docs:api

@@ -9,6 +9,7 @@ export default tseslint.config(
       "renders/",
       "scripts/smoke-artifacts/",
       "package-lock.json",
+      "docs/api/",
     ],
   },
   eslint.configs.recommended,

@@ -14,6 +14,7 @@
     "verify:rig": "esbuild scripts/verify-cam-rig.mts --bundle --platform=node --format=esm --external:three --outfile=scripts/verify-cam-rig.bundle.mjs --log-level=warning && node scripts/verify-cam-rig.bundle.mjs && rm scripts/verify-cam-rig.bundle.mjs",
     "verify:scenarios": "esbuild scripts/verify-scenarios.mts --bundle --platform=node --format=esm --outfile=scripts/verify-scenarios.bundle.mjs --log-level=warning && node scripts/verify-scenarios.bundle.mjs && rm scripts/verify-scenarios.bundle.mjs",
     "verify:factory": "esbuild scripts/verify-factory.mts --bundle --platform=node --format=esm --external:three --external:esbuild --outfile=scripts/verify-factory.bundle.mjs --log-level=warning && node scripts/verify-factory.bundle.mjs && rm scripts/verify-factory.bundle.mjs",
+    "docs:api": "typedoc --options typedoc.json",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "smoke": "node scripts/smoke.mts",
@@ -27,6 +28,7 @@
     "playwright-core": "^1.63.0",
     "prettier": "^3.9.6",
     "three": "^0.180.0",
+    "typedoc": "^0.28.20",
     "typescript": "^5.9.2",
     "typescript-eslint": "^8.70.0",
     "vite": "^7.1.0"
