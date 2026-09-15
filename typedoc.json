@@ -1,0 +1,23 @@
+// TypeDoc for the factory's public API (issue #9): the barrel module is the
+// single entry point, so the site documents exactly the sanctioned surface.
+// Everything reachable from src/factory/index.ts is included; nothing else.
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "entryPoints": ["src/factory/index.ts"],
+  "entryPointStrategy": "resolve",
+  "out": "docs/api",
+  "name": "journeyman-sim · factory API",
+  "includeVersion": true,
+  "readme": "none",
+  "githubPages": false,
+  "treatWarningsAsErrors": true,
+  "treatValidationWarningsAsErrors": true,
+  "validation": {
+    "invalidLink": true,
+    "invalidPath": true,
+    "notExported": false
+  },
+  "excludePrivate": true,
+  "excludeProtected": true,
+  "excludeExternals": true
+}

@@ -113,6 +113,12 @@ handle's effectful methods, so pure stages never import WebGL and the whole
 public surface imports cleanly under plain Node. Every barrel export is
 semver-contracted TSDoc'd API.
 
+A generated API reference (TypeDoc, single-entry `src/factory/index.ts`) is
+published to GitHub Pages by CI: see
+<https://wollacksystems.github.io/journeyman-sim/>. It regenerates on every
+push to `main` via `.github/workflows/pages.yml`; the site itself is never
+committed (regenerate locally with `npm run docs:api`).
+
 The ingest reader (`readCorpus` / `validateCorpusIndex` / `iterTrainingTuples`,
 issues #8/#9) closes the loop on recall: it validates a corpus `index.json`
 structurally — schema/version gates, required fields, path invariants (no

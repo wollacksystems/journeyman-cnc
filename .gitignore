@@ -24,6 +24,9 @@ review/
 scripts/verify-cam-rig.bundle.mjs
 scripts/verify-scenarios.bundle.mjs
 
+# Generated API reference (TypeDoc; published to GitHub Pages by CI, never committed)
+docs/api/
+
 # Environment / secrets (.env.smoke is committed smoke capture config, not secrets)
 .env
 .env.*
