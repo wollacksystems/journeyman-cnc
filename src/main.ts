@@ -14,6 +14,8 @@ import { LOCKED_ENV } from "./factory/environment";
 import { planFactory, type FactoryPlan } from "./factory/plan";
 import { createFactoryWorld } from "./factory/world";
 import { renderFactoryJob } from "./factory/render";
+import { saveCorpus } from "./factory/corpus-save";
+import type { FactoryCaptureResult } from "./factory/render";
 
 const FPS = 30;
 
@@ -345,7 +347,7 @@ if (import.meta.env.DEV) {
       statusFor(
         `factory seed ${plan.rootSeed}: rendering ${plan.jobs.length} generated scenario(s)...`,
       );
-      let clips = 0;
+      const results: FactoryCaptureResult[] = [];
       for (let ji = 0; ji < plan.jobs.length; ji++) {
         const job = plan.jobs[ji];
         if (!job) throw new Error(`factory job ${ji} missing`);
@@ -357,18 +359,13 @@ if (import.meta.env.DEV) {
             );
           },
         });
-        for (const clip of result.clips) {
-          downloadBlob(clip.blob, `renders/${job.scenario.id}/${clip.camera}.mp4`);
-        }
-        downloadBlob(
-          new Blob([JSON.stringify(result.manifest, null, 2)], { type: "application/json" }),
-          `renders/${job.scenario.id}/manifest.json`,
-        );
-        clips += result.clips.length;
-        statusFor(`saved ${job.scenario.id} (${ji + 1}/${plan.jobs.length})`);
+        results.push(result);
+        statusFor(`rendered ${job.scenario.id} (${ji + 1}/${plan.jobs.length})`);
       }
+      statusFor(`exporting corpus ${plan.rootSeed}: ${results.length} scenario(s)...`);
+      const summary = await saveCorpus(plan, results);
       statusFor(
-        `factory saved renders/: ${plan.jobs.length} scenarios, ${clips} clips, seed ${plan.rootSeed}`,
+        `saved ${summary.corpusRoot}: ${summary.scenarioCount} scenarios, ${summary.clipCount} clips + index.json (seed ${summary.rootSeed})`,
       );
     } catch (error) {
       console.error(error);

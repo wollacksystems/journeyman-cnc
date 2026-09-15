@@ -313,6 +313,15 @@ export const TEMPLATE_IDS = ["sensor-trip", "way-lube", "atc-jam"] as const;
  * in any generated environment. ATC-side-relative anchors flip with
  * env.atcSide; the ATC pod itself is mirrored by the cell builder.
  */
+/**
+ * The canonical per-scenario sub-seed: a pure function of (environment,
+ * template, slot). Generation and corpus export both route through this so
+ * exported seeds always reproduce their scenario exactly.
+ */
+export function scenarioSeedFor(env: EnvSpec, templateId: string, slot = 0): number {
+  return hashSeed(`${env.seed}:${env.id}:${templateId}:${slot}`);
+}
+
 export function generateScenario(
   env: EnvSpec,
   templateId: string,
@@ -324,7 +333,7 @@ export function generateScenario(
 
   // The slot disambiguates repeated templates within one environment and
   // diversifies their timing/narration.
-  const rng = createRng(hashSeed(`${env.seed}:${env.id}:${templateId}:${slot}`));
+  const rng = createRng(scenarioSeedFor(env, templateId, slot));
   const t = timing(rng, durationSec);
 
   // ATC templates anchor to the pod, which mirrors with the environment's

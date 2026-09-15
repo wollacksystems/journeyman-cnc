@@ -4,9 +4,26 @@
  * binding that lets templates run in any generated environment.
  */
 import { planFactory } from "../src/factory/plan.ts";
-import { generateScenario, TEMPLATE_IDS, TEMPLATE_REGISTRY } from "../src/factory/scenario-gen.ts";
+import {
+  generateScenario,
+  scenarioSeedFor,
+  TEMPLATE_IDS,
+  TEMPLATE_REGISTRY,
+} from "../src/factory/scenario-gen.ts";
 import { generateEnvironment, LOCKED_ENV, toWorld } from "../src/factory/environment.ts";
 import { buildFactoryManifest } from "../src/factory/manifest.ts";
+import {
+  buildCorpusIndex,
+  buildScenarioScriptDoc,
+  clipManifestPath,
+  clipPath,
+  corpusDirName,
+  corpusIndexPath,
+  corpusJson,
+  corpusRootPath,
+  envSpecPath,
+  scenarioScriptPath,
+} from "../src/factory/corpus.ts";
 import { createRng } from "../src/factory/rng.ts";
 import { createMachineCell } from "../src/cell.ts";
 import { CameraRig } from "../src/rig.ts";
@@ -250,6 +267,133 @@ check(
   "cell builder honors atcSide",
   defaultCell.atc.position.x > 0 && mirroredCell.atc.position.x < 0,
   `default ${defaultCell.atc.position.x.toFixed(2)}, mirrored ${mirroredCell.atc.position.x.toFixed(2)}`,
+);
+
+// 8. Corpus export layer: stable paths, complete index, seeds that replay.
+const corpusPlan = planFactory(777, { envCount: 2, perEnv: 3 });
+check(
+  "corpus dir pads seeds for lexical order",
+  corpusDirName(777) === "0000000777" && corpusRootPath(777) === "corpora/0000000777",
+  corpusRootPath(777),
+);
+check(
+  "corpus paths are stable functions of ids",
+  clipPath(5, "atc-jam-env-00", "head") === "corpora/0000000005/clips/atc-jam-env-00/head.mp4" &&
+    scenarioScriptPath(5, "atc-jam-env-00") ===
+      "corpora/0000000005/scenarios/atc-jam-env-00.json" &&
+    envSpecPath(5, "env-00") === "corpora/0000000005/envs/env-00.json" &&
+    clipManifestPath(5, "atc-jam-env-00") ===
+      "corpora/0000000005/clips/atc-jam-env-00/manifest.json" &&
+    corpusIndexPath(5) === "corpora/0000000005/index.json",
+  "envs/ scenarios/ clips/ under the padded root",
+);
+
+const clipsByScenario: Record<string, string[]> = {};
+for (const job of corpusPlan.jobs) {
+  clipsByScenario[job.scenario.id] = [...job.scenario.cameras];
+}
+const index = buildCorpusIndex({
+  plan: corpusPlan,
+  clipsByScenario,
+  exportedUtc: "2026-01-01T00:00:00.000Z",
+});
+check(
+  "index identity + plan provenance",
+  index.schema === "journeyman-corpus-index" &&
+    index.schemaVersion === 1 &&
+    index.rootSeed === 777 &&
+    index.plan.envCount === 2 &&
+    index.plan.perEnv === 3 &&
+    index.engineVersion === ENGINE_VERSION,
+  `seed ${index.rootSeed}, ${index.plan.envCount}x${index.plan.perEnv}, engine ${index.engineVersion}`,
+);
+check(
+  "index covers every job exactly once",
+  index.scenarios.length === corpusPlan.jobs.length &&
+    index.environments.length === 2 &&
+    index.environments.reduce((n, e) => n + e.scenarioIds.length, 0) === corpusPlan.jobs.length,
+  `${index.environments.length} envs, ${index.scenarios.length} scenarios`,
+);
+let indexPathsOk = true;
+for (const entry of index.scenarios) {
+  const cameras = Object.keys(entry.clips);
+  if (
+    entry.clips["side-a"] !== clipPath(777, entry.scenarioId, "side-a") ||
+    entry.manifest !== clipManifestPath(777, entry.scenarioId) ||
+    entry.script !== scenarioScriptPath(777, entry.scenarioId) ||
+    cameras.length !== 4
+  ) {
+    indexPathsOk = false;
+  }
+  const env = index.environments.find((e) => e.envId === entry.envId);
+  if (!env || env.spec !== envSpecPath(777, entry.envId)) indexPathsOk = false;
+}
+check(
+  "index artifact paths all resolve through the layout functions",
+  indexPathsOk,
+  "script + manifest + 4 clips + env spec per entry",
+);
+const seedReplay = index.scenarios.every((entry) => {
+  const job = corpusPlan.jobs.find((j) => j.scenario.id === entry.scenarioId);
+  return (
+    job !== undefined &&
+    entry.seed === scenarioSeedFor(job.env, job.scenario.templateId, job.scenario.slot) &&
+    JSON.stringify(generateScenario(job.env, job.scenario.templateId, 50, job.scenario.slot)) ===
+      JSON.stringify(job.scenario)
+  );
+});
+check(
+  "index seeds replay their scenarios",
+  seedReplay,
+  "entry.seed regenerates the exact script for every scenario",
+);
+const lessonOk = index.scenarios.every((entry) => {
+  const job = corpusPlan.jobs.find((j) => j.scenario.id === entry.scenarioId);
+  return (
+    job !== undefined &&
+    entry.lesson.title === job.scenario.lesson.title &&
+    entry.lesson.body === job.scenario.lesson.body
+  );
+});
+check(
+  "index carries lessons for ingest labels",
+  lessonOk,
+  "lesson.title/body match the generated scripts",
+);
+const scriptDoc = buildScenarioScriptDoc(corpusPlan.jobs[0]!, 777);
+check(
+  "script docs carry generation provenance",
+  scriptDoc.provenance.rootSeed === 777 &&
+    scriptDoc.provenance.envId === corpusPlan.jobs[0]!.env.id &&
+    scriptDoc.provenance.seed ===
+      scenarioSeedFor(
+        corpusPlan.jobs[0]!.env,
+        corpusPlan.jobs[0]!.scenario.templateId,
+        corpusPlan.jobs[0]!.scenario.slot,
+      ) &&
+    scriptDoc.provenance.templateId === corpusPlan.jobs[0]!.scenario.templateId,
+  `root 777, env ${scriptDoc.provenance.envId}, seed ${scriptDoc.provenance.seed}`,
+);
+// ExportedUtc must not leak into any computed path (overwrite-in-place).
+const indexA = buildCorpusIndex({
+  plan: corpusPlan,
+  clipsByScenario,
+  exportedUtc: "2026-01-01T00:00:00.000Z",
+});
+const indexB = buildCorpusIndex({
+  plan: corpusPlan,
+  clipsByScenario,
+  exportedUtc: "2030-06-15T12:00:00.000Z",
+});
+check(
+  "re-export overwrites in place (paths ignore time)",
+  JSON.stringify({ ...indexA, exportedUtc: "" }) === JSON.stringify({ ...indexB, exportedUtc: "" }),
+  "identical modulo exportedUtc",
+);
+check(
+  "corpus json is stable + terminated",
+  corpusJson({ b: 1, a: 2 }) === '{\n  "b": 1,\n  "a": 2\n}\n',
+  "2-space pretty print with trailing newline",
 );
 
 console.log(`\n${failures === 0 ? "ALL FACTORY CHECKS PASSED" : `${failures} CHECK(S) FAILED`}`);

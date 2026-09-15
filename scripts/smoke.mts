@@ -48,11 +48,20 @@ function formatBytes(n: number): string {
 
 /**
  * Chromium flattens slashes in download names, so the app's
- * "renders/<scenarioId>/<file>" target arrives as "renders_<scenarioId>_<file>".
- * Restore the structured layout (scenario ids and cameras use hyphens only).
+ * "renders/<scenarioId>/<file>" target arrives as "renders_<scenarioId>_<file>"
+ * (corpus exports flatten the same way under "corpora_<seed>_..."). Restore
+ * the structured layout (scenario ids and cameras use hyphens only).
  */
 function structuredPath(suggested: string): string {
   const flat = suggested.replace(/\\/g, "/");
+  const corpora = /^corpora_(\d+)_(.+)$/.exec(flat);
+  if (corpora) {
+    // corpora/<seed>/<segment>/... — ids carry no underscores, so the
+    // remaining underscores are exactly the directory separators.
+    const [, seed, rest] = corpora;
+    const parts = rest.split("_");
+    return `corpora/${seed}/${parts[0]}/${parts.slice(1).join("/")}`;
+  }
   const match = /^renders_([a-z0-9-]+)_(.+)$/.exec(flat);
   return match ? `renders/${match[1]}/${match[2]}` : flat;
 }
