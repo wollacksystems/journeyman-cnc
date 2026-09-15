@@ -113,6 +113,18 @@ handle's effectful methods, so pure stages never import WebGL and the whole
 public surface imports cleanly under plain Node. Every barrel export is
 semver-contracted TSDoc'd API.
 
+The ingest reader (`readCorpus` / `validateCorpusIndex` / `iterTrainingTuples`,
+issues #8/#9) closes the loop on recall: it validates a corpus `index.json`
+structurally — schema/version gates, required fields, path invariants (no
+dot-dot escapes, correct `corpora/<seed>/` layout), seed ranges, and
+env/scenario cross-references — then streams typed `TrainingTuple`s (lesson
+labels + per-camera clip paths + script/manifest paths + regeneration seed)
+in plan order. File access is injected via the `CorpusFilesystem` port, so
+the same reader runs against Node `fs/promises` (scripts/CI/ingest) or an
+in-memory/fetch adapter (browser), and a tuple's `seed` regenerates its
+exported script exactly — the property that makes corpora replayable ground
+truth for training.
+
 Dev controls (lower-left): `PLAN FACTORY` prints the corpus a seed will produce;
 `PREVIEW ENV` cycles the live canvas through the planned generated environments
 (rotated cell, palette, lighting + the generated scenario's beats); `RENDER
@@ -130,7 +142,10 @@ export layer (stable paths, complete index, seeds that replay every script,
 lessons carried for ingest labels, overwrite-in-place re-export), and the
 public-API contract (facade `plan()`/`describe()` equality with the engine
 layers, JSON round-trip replay, spec normalization, barrel surface, hidden
-internals, preview apply/restore).
+internals, preview apply/restore), and the ingest reader (fresh-index
+validation, plan-order tuples with full data, tuple-seed regeneration
+identity, 13 tamper classes rejected with located problem paths, and a real
+temp-dir export consumed back through a Node fs adapter).
 
 ## Verification
 

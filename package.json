@@ -1,7 +1,7 @@
 {
   "name": "journeyman-sim",
   "private": true,
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Synthetic CNC training environment: multi-camera Three.js rig with scripted scenarios and a render-then-ingest proof pipeline.",
   "type": "module",
   "scripts": {

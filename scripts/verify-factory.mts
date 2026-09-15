@@ -32,6 +32,13 @@ import { validateScenario } from "../src/scenario/types.ts";
 import { ENGINE_VERSION } from "../src/version.ts";
 import * as factoryApi from "../src/factory/index.ts";
 import type { FactoryWorld } from "../src/factory/world.ts";
+import {
+  iterTrainingTuples,
+  readCorpusIndex,
+  readScenarioScript,
+  validateCorpusIndex,
+  type CorpusFilesystem,
+} from "../src/factory/corpus-read.ts";
 
 let failures = 0;
 function check(name: string, condition: boolean, detail: string): void {
@@ -507,6 +514,185 @@ check(
     applied[applied.length - 1] === LOCKED_ENV.id,
     `back to ${LOCKED_ENV.id}`,
   );
+}
+
+// ---------------------------------------------------------------------------
+// Ingest reader (issues #8/#9): validate exported indexes and stream typed
+// training tuples without knowing the on-disk layout. The in-memory map
+// below doubles as the browser-side CorpusFilesystem adapter example; the
+// disk check at the end exercises the Node adapter against a real export.
+// ---------------------------------------------------------------------------
+const readerIndex = buildCorpusIndex({
+  plan: corpusPlan,
+  clipsByScenario,
+  exportedUtc: "2026-09-15T00:00:00.000Z",
+});
+const readerJson = corpusJson(readerIndex);
+const memFiles = new Map<string, string>([
+  [corpusIndexPath(777), readerJson],
+  ...corpusPlan.jobs.map(
+    (job) =>
+      [
+        scenarioScriptPath(777, job.scenario.id),
+        corpusJson(buildScenarioScriptDoc(job, 777)),
+      ] as const,
+  ),
+]);
+const memFs: CorpusFilesystem = {
+  readFile: async (p) => {
+    const hit = memFiles.get(p);
+    if (hit === undefined) throw new Error(`missing: ${p}`);
+    return hit;
+  },
+};
+const readValidation = await readCorpusIndex(memFs, corpusIndexPath(777));
+check(
+  "reader validates a freshly built index",
+  readValidation.ok && readValidation.index !== null,
+  readValidation.ok
+    ? `${readValidation.problems.length} problems in ${readerIndex.scenarios.length}-scenario index`
+    : readValidation.problems.map((p) => `${p.at}: ${p.message}`).join("; "),
+);
+const readerTuples = readValidation.index ? [...iterTrainingTuples(readValidation.index)] : [];
+check(
+  "tuples stream per scenario in plan order with complete data",
+  readerTuples.length === corpusPlan.jobs.length &&
+    readerTuples.every(
+      (t, i) =>
+        t.scenarioId === corpusPlan.jobs[i]!.scenario.id &&
+        t.rootSeed === 777 &&
+        t.env.envId === corpusPlan.jobs[i]!.env.id &&
+        Object.keys(t.clips).length === 4 &&
+        t.lesson.title.length > 0 &&
+        t.seed > 0,
+    ),
+  `${readerTuples.length} tuples, 4 clips each`,
+);
+{
+  // The tuple's seed must regenerate the exported script exactly.
+  const firstTuple = readerTuples[0]!;
+  const doc = await readScenarioScript(memFs, firstTuple);
+  const job0 = corpusPlan.jobs[0]!;
+  const regenerated = generateScenario(job0.env, firstTuple.templateId, 50, job0.scenario.slot);
+  check(
+    "tuple seed replays its exported script (regeneration identity)",
+    doc.provenance.seed === firstTuple.seed &&
+      doc.provenance.rootSeed === 777 &&
+      doc.provenance.seed ===
+        scenarioSeedFor(job0.env, firstTuple.templateId, job0.scenario.slot) &&
+      JSON.stringify(doc.beats) === JSON.stringify(regenerated.beats),
+    `seed ${firstTuple.seed}, template ${firstTuple.templateId}`,
+  );
+}
+{
+  // Mutation battery: every corruption class the validator exists for.
+  const tampered = (mutate: (doc: Record<string, unknown>) => void): string => {
+    const clone = JSON.parse(readerJson) as Record<string, unknown>;
+    mutate(clone);
+    return validateCorpusIndex(JSON.stringify(clone)).ok ? "MISSED" : "caught";
+  };
+  const scenarioAt = (d: Record<string, unknown>): Record<string, unknown> =>
+    (d["scenarios"] as Record<string, unknown>[])[0]!;
+  const results = [
+    tampered((d) => {
+      d["schema"] = "other-corpus";
+    }),
+    tampered((d) => {
+      d["schemaVersion"] = 2;
+    }),
+    tampered((d) => {
+      (d["scenarios"] as unknown[]).splice(0, 1);
+    }),
+    tampered((d) => {
+      scenarioAt(d)["seed"] = -1;
+    }),
+    tampered((d) => {
+      scenarioAt(d)["envId"] = "env-nope";
+    }),
+    tampered((d) => {
+      scenarioAt(d)["script"] = "corpora/0000000777/scenarios/../../etc/passwd";
+    }),
+    tampered((d) => {
+      scenarioAt(d)["manifest"] = "renders/other.json";
+    }),
+    tampered((d) => {
+      scenarioAt(d)["clips"] = { front: "corpora/0000000777/clips/wrong/front.mp4" };
+    }),
+    tampered((d) => {
+      scenarioAt(d)["clips"] = {};
+    }),
+    tampered((d) => {
+      (d["environments"] as Record<string, unknown>[])[0]!["scenarioIds"] = [];
+    }),
+    tampered((d) => {
+      (d["environments"] as unknown[]).splice(0, 1);
+    }),
+    tampered((d) => {
+      d["exportedUtc"] = "not-a-date";
+    }),
+    tampered((d) => {
+      d["plan"] = { envCount: 1, perEnv: 1 };
+    }),
+  ];
+  check(
+    "reader rejects tampered indexes (schema, shape, seeds, xrefs, paths, counts)",
+    results.every((r) => r === "caught"),
+    `${results.filter((r) => r === "caught").length}/${results.length} caught`,
+  );
+  const located = JSON.parse(readerJson) as Record<string, unknown>;
+  scenarioAt(located)["seed"] = "zero";
+  const problems = validateCorpusIndex(JSON.stringify(located)).problems;
+  check(
+    "validation problems carry located paths",
+    problems.length >= 1 && problems.some((p) => p.at === "scenarios[0].seed"),
+    problems.map((p) => p.at).join(", "),
+  );
+}
+{
+  // Node adapter: write the corpus to a real temp dir (saveCorpus layout,
+  // empty clip stand-ins) and consume it back through the reader.
+  const { mkdtemp, writeFile, mkdir, rm, readFile } = await import("node:fs/promises");
+  const { join, dirname } = await import("node:path");
+  const { tmpdir } = await import("node:os");
+  const dir = await mkdtemp(join(tmpdir(), "corpus-read-"));
+  try {
+    const writeJson = async (path: string, value: unknown): Promise<void> => {
+      const full = join(dir, path);
+      await mkdir(dirname(full), { recursive: true });
+      await writeFile(full, corpusJson(value));
+    };
+    await writeJson(corpusIndexPath(777), readerIndex);
+    for (const job of corpusPlan.jobs) {
+      await writeJson(scenarioScriptPath(777, job.scenario.id), buildScenarioScriptDoc(job, 777));
+      await writeJson(clipManifestPath(777, job.scenario.id), { standby: true });
+      for (const camera of clipsByScenario[job.scenario.id] ?? []) {
+        const full = join(dir, clipPath(777, job.scenario.id, camera));
+        await mkdir(dirname(full), { recursive: true });
+        await writeFile(full, "clip-bytes");
+      }
+    }
+    const seenEnvs = new Set<string>();
+    for (const job of corpusPlan.jobs) {
+      if (seenEnvs.has(job.env.id)) continue;
+      seenEnvs.add(job.env.id);
+      await writeJson(envSpecPath(777, job.env.id), job.env);
+    }
+    const nodeFs: CorpusFilesystem = {
+      readFile: async (p) => await readFile(join(dir, p), "utf8"),
+    };
+    const diskValidation = await readCorpusIndex(nodeFs, corpusIndexPath(777));
+    const diskTuples = diskValidation.index ? [...iterTrainingTuples(diskValidation.index)] : [];
+    const diskScriptOk =
+      diskTuples[0] !== undefined &&
+      (await readScenarioScript(nodeFs, diskTuples[0])).provenance.rootSeed === 777;
+    check(
+      "reader consumes a corpus written to real disk",
+      diskValidation.ok && diskTuples.length === corpusPlan.jobs.length && diskScriptOk,
+      `${diskTuples.length} tuples from temp export`,
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 }
 
 console.log(`\n${failures === 0 ? "ALL FACTORY CHECKS PASSED" : `${failures} CHECK(S) FAILED`}`);

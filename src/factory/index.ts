@@ -73,6 +73,21 @@ export type {
 export type { FactoryCaptureManifest } from "./manifest";
 export type { CorpusExportSummary } from "./corpus-save";
 
+// Ingest reader: validate + stream corpora (headless-safe, DOM-free).
+export {
+  iterTrainingTuples,
+  readCorpus,
+  readCorpusIndex,
+  readScenarioScript,
+  validateCorpusIndex,
+} from "./corpus-read";
+export type {
+  CorpusFilesystem,
+  CorpusProblem,
+  CorpusValidation,
+  TrainingTuple,
+} from "./corpus-read";
+
 // Execution types (the values are internal; see the layer map above).
 export type { FactoryCaptureResult, FactoryRenderOptions } from "./render";
 export type { FactoryWorld, FactoryWorldOptions } from "./world";
