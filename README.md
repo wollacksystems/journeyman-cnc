@@ -169,7 +169,10 @@ validation, plan-order tuples with full data, tuple-seed regeneration
 identity, 13 tamper classes rejected with located problem paths, and a real
 temp-dir export consumed back through a Node fs adapter), and the corpus
 JSON Schema (fresh emitted artifact, fixture batteries on both sides, and
-the reader/schema drift matrix).
+the reader/schema drift matrix), and an import-hygiene gate (issue #12):
+root-reaching imports use the `@/` alias declared in `tsconfig.json` and
+derived into Vite's `resolve.alias`, and the suite fails if any `../src/`
+relative chain regrows.
 
 ## Verification
 

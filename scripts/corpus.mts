@@ -23,7 +23,7 @@ import {
   readCorpusIndex,
   readScenarioScript,
   type CorpusFilesystem,
-} from "../src/factory/index.ts";
+} from "@/factory/index.ts";
 
 interface CliOptions {
   command: "list" | "tuples" | "verify";

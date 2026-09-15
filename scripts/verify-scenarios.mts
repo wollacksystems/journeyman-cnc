@@ -1,8 +1,8 @@
 /** Headless deterministic proof for the complete Phase 3 scenario registry. */
 import { readFileSync } from "node:fs";
-import { scenarios } from "../src/scenario/registry.ts";
-import { driveScenario } from "../src/scenario/drive.ts";
-import { validateScenario } from "../src/scenario/types.ts";
+import { scenarios } from "@/scenario/registry.ts";
+import { driveScenario } from "@/scenario/drive.ts";
+import { validateScenario } from "@/scenario/types.ts";
 
 type Fixture = {
   scenarioId: string;
