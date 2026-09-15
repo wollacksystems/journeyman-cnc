@@ -139,6 +139,14 @@ derive both artifacts from it (`zodToJsonSchema` for the schema file,
 `z.infer` for the reader's types); the drift check is what makes that
 migration safe to attempt.
 
+The corpus CLI (`npm run corpus -- <list|tuples|verify> --root <dir-containing-corpora/> --seed <n>`,
+issue #8 §4) inspects exported corpora from the shell using only the public
+barrel: `list [--json]` prints the scenario inventory, `tuples` streams
+JSONL training tuples for ingest piping, and `verify` checks every
+referenced artifact (present, non-empty, provenance-coherent) with exit
+codes suitable for CI. `--root` is the directory containing `corpora/`
+because index paths are project-root-relative.
+
 Dev controls (lower-left): `PLAN FACTORY` prints the corpus a seed will produce;
 `PREVIEW ENV` cycles the live canvas through the planned generated environments
 (rotated cell, palette, lighting + the generated scenario's beats); `RENDER
