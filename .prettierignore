@@ -2,4 +2,8 @@ node_modules/
 dist/
 renders/
 scripts/smoke-artifacts/
+scripts/factory-artifacts/
+# Generated artifact: emitted from src/factory/corpus-schema.ts (freshness
+# is pinned by verify:factory; formatting is the emitter's business, not Prettier's).
+schemas/
 package-lock.json

@@ -738,5 +738,287 @@ check(
   }
 }
 
+// ---------------------------------------------------------------------------
+// Corpus JSON Schema (issue #9 schema milestone): the reusable schema at
+// schemas/journeyman-corpus-index.v1.json is emitted from the exported
+// corpusIndexJsonSchema const, and a mini JSON-Schema evaluator keeps the
+// schema and the reader's structural walker from drifting apart: an explicit
+// matrix of which layer catches which violation, plus fixture batteries on
+// both sides.
+// ---------------------------------------------------------------------------
+type SchemaNode = Record<string, unknown>;
+function schemaViolations(
+  schema: SchemaNode,
+  value: unknown,
+  at: string,
+  out: string[],
+  rootDefs?: Record<string, SchemaNode>,
+): void {
+  const defs = rootDefs ?? ((schema["$defs"] ?? {}) as Record<string, SchemaNode>);
+  const ref = schema["$ref"];
+  if (typeof ref === "string") {
+    const resolved = ref.startsWith("#/$defs/") ? defs[ref.slice("#/$defs/".length)] : undefined;
+    if (!resolved) {
+      out.push(`${at}: unresolved $ref ${ref}`);
+      return;
+    }
+    schemaViolations(resolved, value, at, out, defs);
+    return;
+  }
+  if ("const" in schema && JSON.stringify(value) !== JSON.stringify(schema["const"])) {
+    out.push(`${at}: const mismatch`);
+    return;
+  }
+  if ("enum" in schema) {
+    const allowed = schema["enum"] as unknown[];
+    if (!allowed.some((v) => JSON.stringify(v) === JSON.stringify(value))) {
+      out.push(`${at}: enum mismatch`);
+    }
+  }
+  const type = schema["type"] as string | undefined;
+  if (typeof type === "string") {
+    const matches =
+      (type === "object" && typeof value === "object" && value !== null && !Array.isArray(value)) ||
+      (type === "array" && Array.isArray(value)) ||
+      (type === "string" && typeof value === "string") ||
+      (type === "integer" && typeof value === "number" && Number.isInteger(value)) ||
+      (type === "number" && typeof value === "number");
+    if (!matches) {
+      out.push(`${at}: expected ${type}`);
+      return;
+    }
+  }
+  if (typeof value === "string") {
+    const minLen = schema["minLength"];
+    if (typeof minLen === "number" && value.length < minLen) out.push(`${at}: minLength`);
+    const pattern = schema["pattern"];
+    if (typeof pattern === "string" && !new RegExp(pattern).test(value)) out.push(`${at}: pattern`);
+    // "format": "date-time" is intentionally annotation-only here (RFC 9457
+    // makes format non-assertive without a vocab); the reader enforces it.
+  }
+  if (typeof value === "number") {
+    const min = schema["minimum"];
+    if (typeof min === "number" && value < min) out.push(`${at}: minimum`);
+  }
+  if (Array.isArray(value)) {
+    const minItems = schema["minItems"];
+    if (typeof minItems === "number" && value.length < minItems) out.push(`${at}: minItems`);
+    const items = schema["items"];
+    if (items && typeof items === "object") {
+      value.forEach((v, i) => schemaViolations(items as SchemaNode, v, `${at}[${i}]`, out, defs));
+    }
+  }
+  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+    const record = value as Record<string, unknown>;
+    for (const key of (schema["required"] as string[] | undefined) ?? []) {
+      if (!(key in record)) out.push(`${at}.${key}: required`);
+    }
+    const minProps = schema["minProperties"];
+    if (typeof minProps === "number" && Object.keys(record).length < minProps) {
+      out.push(`${at}: minProperties`);
+    }
+    const props = (schema["properties"] ?? {}) as Record<string, SchemaNode>;
+    const additional = schema["additionalProperties"];
+    for (const [key, v] of Object.entries(record)) {
+      if (key in props) schemaViolations(props[key]!, v, `${at}.${key}`, out, defs);
+      else if (additional === false) out.push(`${at}.${key}: additionalProperties`);
+      else if (additional && typeof additional === "object") {
+        schemaViolations(additional as SchemaNode, v, `${at}.${key}`, out, defs);
+      }
+    }
+  }
+}
+const schemaCheck = (doc: unknown): string[] => {
+  const out: string[] = [];
+  schemaViolations(factoryApi.corpusIndexJsonSchema as unknown as SchemaNode, doc, "$", out);
+  return out;
+};
+
+// The checked-in schema file is generated from the const — never hand-edited.
+{
+  const { readFile } = await import("node:fs/promises");
+  const onDisk = await readFile("schemas/journeyman-corpus-index.v1.json", "utf8");
+  check(
+    "schemas/*.json is fresh (emitted from corpusIndexJsonSchema)",
+    onDisk === corpusJson(factoryApi.corpusIndexJsonSchema),
+    "byte-identical to the exported const",
+  );
+}
+check(
+  "schema accepts a freshly built index",
+  schemaCheck(JSON.parse(readerJson)).length === 0,
+  `${readerIndex.scenarios.length}-scenario index validates clean`,
+);
+{
+  // Reader-accepted variations must stay schema-accepted (no overfitting to
+  // one corpus shape): a second base corpus plus tolerated mutations.
+  const plan2 = planFactory(42, { envCount: 2, perEnv: 1 });
+  const variedCameras: Record<string, string[]> = {};
+  plan2.jobs.forEach((job, i) => {
+    variedCameras[job.scenario.id] = i === 0 ? ["front", "wrist"] : ["head"];
+  });
+  const varied = JSON.parse(
+    corpusJson(
+      buildCorpusIndex({
+        plan: plan2,
+        clipsByScenario: variedCameras,
+        exportedUtc: "2026-01-02T03:04:05.000Z",
+      }),
+    ),
+  ) as Record<string, unknown>;
+  const env0 = (varied["environments"] as Record<string, unknown>[])[0]!;
+  env0["machineRotation"] = 2.7;
+  env0["palette"] = "midnight-shop";
+  env0["variant"] = "graveyard-crew";
+  varied["engineVersion"] = "0.0.1-test";
+  const scen0 = (varied["scenarios"] as Record<string, unknown>[])[0]!;
+  scen0["templateId"] = "custom-mode";
+  (scen0["lesson"] as Record<string, unknown>)["title"] = "Custom lesson";
+  check(
+    "schema + reader agree on tolerated variations (shape, extra cameras, labels)",
+    schemaCheck(varied).length === 0 && validateCorpusIndex(JSON.stringify(varied)).ok,
+    `varied corpus accepted by both`,
+  );
+}
+{
+  // Violations within the schema's declared scope must be rejected.
+  const bad = (mutate: (doc: Record<string, unknown>) => void): unknown => {
+    const clone = JSON.parse(readerJson) as Record<string, unknown>;
+    mutate(clone);
+    return clone;
+  };
+  const scen0 = (d: Record<string, unknown>): Record<string, unknown> =>
+    (d["scenarios"] as Record<string, unknown>[])[0]!;
+  const env0 = (d: Record<string, unknown>): Record<string, unknown> =>
+    (d["environments"] as Record<string, unknown>[])[0]!;
+  const cases: Array<[string, Record<string, unknown>]> = [
+    ["wrong schema const", bad((d) => (d["schema"] = "nope"))],
+    ["wrong schemaVersion", bad((d) => (d["schemaVersion"] = 2))],
+    ["negative rootSeed", bad((d) => (d["rootSeed"] = -1))],
+    ["fractional rootSeed", bad((d) => (d["rootSeed"] = 777.5))],
+    ["empty engineVersion", bad((d) => (d["engineVersion"] = ""))],
+    ["plan.perEnv 0", bad((d) => (d["plan"] = { envCount: 1, perEnv: 0 }))],
+    ["plan missing count", bad((d) => delete (d["plan"] as Record<string, unknown>)["envCount"])],
+    ["env missing required", bad((d) => delete env0(d)["variant"])],
+    ["env atcSide not ±1", bad((d) => (env0(d)["atcSide"] = 2))],
+    ["env seed 0", bad((d) => (env0(d)["seed"] = 0))],
+    ["spec wrong subtree", bad((d) => (env0(d)["spec"] = "corpora/0000000777/envx/env-00.json"))],
+    [
+      "backslash spec",
+      bad((d) => (env0(d)["spec"] = "corpora\\\\0000000777\\\\envs\\\\env-00.json")),
+    ],
+    ["scenario missing lesson", bad((d) => delete scen0(d)["lesson"])],
+    [
+      "lesson title empty",
+      bad((d) => ((scen0(d)["lesson"] as Record<string, unknown>)["title"] = "")),
+    ],
+    ["scenario seed fractional", bad((d) => (scen0(d)["seed"] = 1.5))],
+    ["clips empty", bad((d) => (scen0(d)["clips"] = {}))],
+    [
+      "clip wrong directory",
+      bad(
+        (d) =>
+          (scen0(d)["clips"] = { front: "corpora/0000000777/other/sensor-trip-env-00/front.mp4" }),
+      ),
+    ],
+    [
+      "manifest wrong name",
+      bad(
+        (d) => (scen0(d)["manifest"] = "corpora/0000000777/clips/sensor-trip-env-00/manifold.json"),
+      ),
+    ],
+    [
+      "script dot-dot escape",
+      bad((d) => (scen0(d)["script"] = "corpora/0000000777/scenarios/../env-00.json")),
+    ],
+    ["additional top-level prop", bad((d) => (d["extra"] = 1))],
+    ["scenarios empty array", bad((d) => (d["scenarios"] = []))],
+  ];
+  const missed = cases.filter(([, doc]) => schemaCheck(doc).length === 0).map(([name]) => name);
+  check(
+    "schema rejects fixture violations within its scope",
+    missed.length === 0,
+    missed.length === 0
+      ? `${cases.length}/${cases.length} rejected`
+      : `MISSED: ${missed.join("; ")}`,
+  );
+}
+{
+  // Drift matrix: for each reader-battery mutation, exactly one layer is the
+  // catcher. Cross-reference/count/format rules are the reader's (the schema
+  // is per-item and intentionally tolerates them); everything else the
+  // schema catches too. If either implementation changes, this breaks and
+  // the matrix + the Zod derivation note must be revisited.
+  const matrix: Array<[string, boolean, boolean]> = [];
+  const mutateDoc = (mutate: (doc: Record<string, unknown>) => void): string => {
+    const clone = JSON.parse(readerJson) as Record<string, unknown>;
+    mutate(clone);
+    return JSON.stringify(clone);
+  };
+  const scen0 = (d: Record<string, unknown>): Record<string, unknown> =>
+    (d["scenarios"] as Record<string, unknown>[])[0]!;
+  // Expected catchers: (reader, schema). Per-item rules (consts, integer/
+  // minimum seeds, subtree patterns, minProperties) are caught by BOTH;
+  // document-level rules (counts, cross-refs, per-env order, date format,
+  // clip-subtree coherence) are the reader's alone — the schema is per-item
+  // and RFC-tolerant on format.
+  const R = true;
+  const S = false;
+  const mutations: Array<[string, (d: Record<string, unknown>) => void, boolean, boolean]> = [
+    ["wrong schema", (d) => (d["schema"] = "nope"), R, !S],
+    ["wrong version", (d) => (d["schemaVersion"] = 2), R, !S],
+    ["dropped scenario", (d) => (d["scenarios"] as unknown[]).splice(0, 1), R, S],
+    ["negative seed", (d) => (scen0(d)["seed"] = -1), R, !S],
+    ["unknown env xref", (d) => (scen0(d)["envId"] = "env-nope"), R, S],
+    [
+      "dot-dot script",
+      (d) => (scen0(d)["script"] = "corpora/0000000777/scenarios/../x.json"),
+      R,
+      !S,
+    ],
+    ["wrong manifest", (d) => (scen0(d)["manifest"] = "renders/x.json"), R, !S],
+    [
+      "wrong clip dir",
+      (d) => (scen0(d)["clips"] = { front: "corpora/0000000777/clips/wrong/front.mp4" }),
+      R,
+      S,
+    ],
+    ["empty clips", (d) => (scen0(d)["clips"] = {}), R, !S],
+    [
+      "empty env scenarioIds",
+      (d) => ((d["environments"] as Record<string, unknown>[])[0]!["scenarioIds"] = []),
+      R,
+      S,
+    ],
+    ["dropped environment", (d) => (d["environments"] as unknown[]).splice(0, 1), R, S],
+    ["bad exportedUtc", (d) => (d["exportedUtc"] = "not-a-date"), R, S],
+    ["count-mismatch plan", (d) => (d["plan"] = { envCount: 1, perEnv: 1 }), R, S],
+  ];
+  for (const [name, mutate, readerRejects, schemaRejects] of mutations) {
+    const json = mutateDoc(mutate);
+    const readerRejectsActual = !validateCorpusIndex(json).ok;
+    const schemaRejectsActual = schemaCheck(JSON.parse(json)).length > 0;
+    matrix.push([
+      name,
+      readerRejectsActual === readerRejects && schemaRejectsActual === schemaRejects,
+      readerRejectsActual,
+      schemaRejectsActual,
+    ]);
+  }
+  const drifted = matrix.filter(([, ok]) => !ok).map(([name]) => name);
+  check(
+    "reader/schema drift matrix holds (13 mutations, expected catcher per layer)",
+    drifted.length === 0,
+    drifted.length === 0
+      ? matrix
+          .map(
+            ([name, , r, s]) =>
+              `${name}:${r ? "reader" : ""}${r && s ? "+" : ""}${s ? "schema" : ""}`,
+          )
+          .join(", ")
+      : `DRIFTED: ${drifted.join("; ")}`,
+  );
+}
+
 console.log(`\n${failures === 0 ? "ALL FACTORY CHECKS PASSED" : `${failures} CHECK(S) FAILED`}`);
 process.exit(failures === 0 ? 0 : 1);

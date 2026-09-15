@@ -125,6 +125,20 @@ in-memory/fetch adapter (browser), and a tuple's `seed` regenerates its
 exported script exactly — the property that makes corpora replayable ground
 truth for training.
 
+The corpus index JSON Schema (issue #9 schema milestone) lives in
+`src/factory/corpus-schema.ts` as the exported `corpusIndexJsonSchema` const
+(draft 2020-12), emitted to the reusable `schemas/journeyman-corpus-index.v1.json`
+artifact. verify:factory pins the artifact byte-fresh against the const,
+validates generated fixtures on both sides (21 in-scope violations rejected;
+tolerated variations accepted by schema _and_ reader), and runs a drift
+matrix over the reader's 13 tamper mutations asserting which layer catches
+which violation — 8 by both, 5 document-level rules by the reader alone. The
+intended evolution (see the module's header note): if maintaining the schema
+and the walker by hand starts to hurt, declare the schema once in **Zod** and
+derive both artifacts from it (`zodToJsonSchema` for the schema file,
+`z.infer` for the reader's types); the drift check is what makes that
+migration safe to attempt.
+
 Dev controls (lower-left): `PLAN FACTORY` prints the corpus a seed will produce;
 `PREVIEW ENV` cycles the live canvas through the planned generated environments
 (rotated cell, palette, lighting + the generated scenario's beats); `RENDER
@@ -145,7 +159,9 @@ layers, JSON round-trip replay, spec normalization, barrel surface, hidden
 internals, preview apply/restore), and the ingest reader (fresh-index
 validation, plan-order tuples with full data, tuple-seed regeneration
 identity, 13 tamper classes rejected with located problem paths, and a real
-temp-dir export consumed back through a Node fs adapter).
+temp-dir export consumed back through a Node fs adapter), and the corpus
+JSON Schema (fresh emitted artifact, fixture batteries on both sides, and
+the reader/schema drift matrix).
 
 ## Verification
 

@@ -87,6 +87,10 @@ export type {
   TrainingTuple,
 } from "./corpus-read";
 
+// Corpus index JSON Schema (issue #9 schema milestone): the reusable,
+// tool-readable declaration of the index contract.
+export { corpusIndexJsonSchema } from "./corpus-schema";
+
 // Execution types (the values are internal; see the layer map above).
 export type { FactoryCaptureResult, FactoryRenderOptions } from "./render";
 export type { FactoryWorld, FactoryWorldOptions } from "./world";
