@@ -11,7 +11,6 @@ const DOWNLOAD_GAP_MS = 400;
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
-import type { FactoryCaptureManifest } from "./manifest";
 import {
   buildCorpusIndex,
   buildScenarioScriptDoc,
@@ -50,14 +49,12 @@ export async function saveCorpus(
 ): Promise<CorpusExportSummary> {
   const rootSeed = plan.rootSeed;
   const clipsByScenario: Record<string, string[]> = {};
-  const manifestsByScenario = new Map<string, FactoryCaptureManifest>();
 
   // Footage + per-scenario capture manifests first (paths are computed from
   // the plan, never from browser download names). Each download is spaced
   // (DOWNLOAD_GAP_MS) so the browser never cancels the burst.
   for (const result of results) {
     const scenarioId = result.job.scenario.id;
-    manifestsByScenario.set(scenarioId, result.manifest);
     const cameras: string[] = [];
     for (const clip of result.clips) {
       cameras.push(clip.camera);

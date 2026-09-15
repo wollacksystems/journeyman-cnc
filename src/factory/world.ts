@@ -45,8 +45,9 @@ export function createFactoryWorld(
 ): FactoryWorld {
   const canvas = options.canvas ?? document.createElement("canvas");
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+  // Shapes the live preview only: capture renderers are per-camera and pin
+  // ratio 1 themselves (see capture/batch.ts), so output frames are unaffected.
   renderer.setPixelRatio(options.pixelRatio ?? 1);
-  renderer.setPixelRatio(1);
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFShadowMap;
 
