@@ -13,6 +13,37 @@
  * dependency in src/): schema + version gates, required fields, path
  * invariants, seed ranges, and id/xref consistency. Nothing here imports
  * WebGL or the capture stack; this module is part of the public layer.
+ *
+ * @module
+ * @example
+ * ```ts
+ * import { nodeCorpusFilesystem } from "@/factory/corpus-read.ts"; // scripts only
+ * ```
+ * In scripts the filesystem port is `node:fs/promises`; in the browser it is
+ * a fetch-backed adapter or an in-memory map. The full read flow:
+ *
+ * ```ts
+ * import type { CorpusFilesystem } from "@/factory/corpus-read.ts";
+ * import {
+ *   iterTrainingTuples,
+ *   readCorpusIndex,
+ *   readScenarioScript,
+ *   validateCorpusIndex,
+ * } from "@/factory/corpus-read.ts";
+ *
+ * declare const fs: CorpusFilesystem;
+ * declare const corpusRoot: string; // e.g. "corpora/0000002026"
+ *
+ * const validation = await readCorpusIndex(fs, `${corpusRoot}/index.json`);
+ * if (!validation.ok || !validation.index) {
+ *   throw new Error(`bad corpus: ${JSON.stringify(validation.problems)}`);
+ * }
+ * for (const tuple of iterTrainingTuples(validation.index)) {
+ *   const script = await readScenarioScript(fs, tuple); // provenance-checked
+ *   tuple.lesson.title;  // ground-truth label
+ *   tuple.clips;         // camera -> clip path, relative to the corpus root
+ * }
+ * ```
  */
 
 import type { CorpusIndex, CorpusIndexScenario, ScenarioScriptDoc } from "./corpus";
@@ -54,6 +85,15 @@ function isObject(value: unknown): value is Record<string, unknown> {
  * invariants (absolute paths, backslashes, `..` escapes, wrong corpus-root
  * prefix), non-finite/negative seeds, and xref inconsistencies (env ids,
  * scenario order, per-env scenario lists, plan counts).
+ *
+ * @example
+ * ```ts
+ * import { validateCorpusIndex } from "@/factory/corpus-read.ts";
+ *
+ * const bad = validateCorpusIndex("not json");
+ * bad.ok;          // false
+ * bad.problems[0]; // { at: "$", message: "invalid JSON: ..." }
+ * ```
  */
 export function validateCorpusIndex(json: string): CorpusValidation {
   let doc: unknown;
@@ -297,6 +337,21 @@ export async function readCorpusIndex(
  * Stream every scenario of a validated corpus as {@link TrainingTuple}s, in
  * plan order. `fs` resolves the tuple's artifact paths on demand (scripts,
  * manifests, clip bytes) — the reader itself never touches disk.
+ *
+ * @example
+ * ```ts
+ * import { iterTrainingTuples, readCorpusIndex } from "@/factory/corpus-read.ts";
+ * import type { CorpusFilesystem } from "@/factory/corpus-read.ts";
+ *
+ * declare const fs: CorpusFilesystem;
+ * const { ok, index } = await readCorpusIndex(fs, "corpora/0000002026/index.json");
+ * if (ok && index) {
+ *   const tuples = [...iterTrainingTuples(index)];
+ *   tuples.length;                     // one per scenario in the corpus
+ *   tuples[0]!.templateId;             // e.g. "sensor-trip"
+ *   tuples[0]!.lesson.title;           // ground-truth label for ingest
+ * }
+ * ```
  */
 export function* iterTrainingTuples(index: CorpusIndex): Generator<TrainingTuple, void, void> {
   const envById = new Map(index.environments.map((e) => [e.envId, e]));
@@ -327,6 +382,20 @@ export function* iterTrainingTuples(index: CorpusIndex): Generator<TrainingTuple
  * match what the index claims. Guards against tampered or cross-planted
  * script files — the index is validated, but artifacts on disk are not
  * trusted blindly.
+ *
+ * @throws When the script's provenance block disagrees with the tuple.
+ * @example
+ * ```ts
+ * import { iterTrainingTuples, readScenarioScript } from "@/factory/corpus-read.ts";
+ * import type { CorpusFilesystem } from "@/factory/corpus-read.ts";
+ *
+ * declare const fs: CorpusFilesystem;
+ * declare const index: import("@/factory/corpus.ts").CorpusIndex;
+ * for (const tuple of iterTrainingTuples(index)) {
+ *   const script = await readScenarioScript(fs, tuple);
+ *   script.lesson.body; // full ground-truth lesson text
+ * }
+ * ```
  */
 export async function readScenarioScript(
   fs: CorpusFilesystem,

@@ -7,6 +7,21 @@
  * produce identical specs — same geometry, same beat timings, same narration
  * picks — so generated footage is reproducible ground truth for the ingest
  * pipeline (the manifest records the seed for recall/replay).
+ *
+ * @module
+ * @example
+ * ```ts
+ * import { createRng, hashSeed } from "@/factory/rng.ts";
+ *
+ * const rng = createRng(2026);
+ * rng.next();          // 0.8401877171544095 — same float forever, same seed
+ * rng.int(1, 10);      // integer in [1, 10] inclusive
+ * rng.pick(["a", "b"]);
+ * rng.shuffle(items);  // shallow copy, input untouched
+ *
+ * // hashSeed turns a string into a seed: stable across machines and runs.
+ * const seed = hashSeed("env-00:sensor-trip");
+ * ```
  */
 export interface Rng {
   /** Next float in [0, 1). */
@@ -25,7 +40,16 @@ export interface Rng {
   shuffle<T>(items: readonly T[]): T[];
 }
 
-/** Pure mulberry32 PRNG: same seed -> same float sequence, forever. */
+/**
+ * Pure mulberry32 PRNG: same seed -> same float sequence, forever.
+ *
+ * @example
+ * ```ts
+ * const a = createRng(7);
+ * const b = createRng(7);
+ * a.next() === b.next(); // true — the sequence is a function of the seed
+ * ```
+ */
 export function createRng(seed: number): Rng {
   let a = seed >>> 0;
   const next = (): number => {
@@ -65,7 +89,14 @@ function shuffleWith<T>(items: readonly T[], next: () => number): T[] {
   return out;
 }
 
-/** Stable 32-bit FNV-1a string hash, for deriving sub-seeds from ids. */
+/**
+ * Stable 32-bit FNV-1a string hash, for deriving sub-seeds from ids.
+ *
+ * @example
+ * ```ts
+ * hashSeed("env-00:sensor-trip"); // same value on every machine, every run
+ * ```
+ */
 export function hashSeed(text: string): number {
   let h = 0x811c9dc5;
   for (let i = 0; i < text.length; i++) {

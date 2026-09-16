@@ -1,3 +1,23 @@
+/**
+ * Generated ScenarioDef plus provenance for manifests and grounding.
+ *
+ * @module
+ * @example
+ * ```ts
+ * import { createRng } from "@/factory/rng.ts";
+ * import { generateEnvironment } from "@/factory/environment.ts";
+ * import { generateScenario, scenarioSeedFor, TEMPLATE_IDS } from "@/factory/scenario-gen.ts";
+ *
+ * const env = generateEnvironment(31337, 0, createRng(31337));
+ * const scenario = generateScenario(env, "sensor-trip");
+ * scenario.id;         // stable recall identity
+ * scenario.lesson;     // ground-truth labels for ingest
+ * scenario.beats.length; // scripted beat timeline
+ *
+ * // TEMPLATE_IDS is the registry order — the planner cycles it per env:
+ * TEMPLATE_IDS; // ["sensor-trip", "way-lube", "atc-jam"]
+ * ```
+ */
 import type { ScenarioBeat, ScenarioCell, ScenarioDef } from "../scenario/types";
 import { createRng, hashSeed, type Rng } from "./rng";
 import { toWorld, toWorldXZ, type EnvSpec } from "./environment";
@@ -317,6 +337,19 @@ export const TEMPLATE_IDS = ["sensor-trip", "way-lube", "atc-jam"] as const;
  * The canonical per-scenario sub-seed: a pure function of (environment,
  * template, slot). Generation and corpus export both route through this so
  * exported seeds always reproduce their scenario exactly.
+ */
+/**
+ * The canonical per-scenario sub-seed: a pure function of (environment,
+ * template, slot). Generation and corpus export both route through this so
+ * exported seeds always reproduce their scenario exactly.
+ *
+ * @example
+ * ```ts
+ * // Reproduce one scenario without replanning the whole corpus:
+ * const seed = scenarioSeedFor(env, "way-lube", 0);
+ * const again = generateScenario(env, "way-lube", 50, 0);
+ * again.seed === seed; // true — the index's `seed` field matches
+ * ```
  */
 export function scenarioSeedFor(env: EnvSpec, templateId: string, slot = 0): number {
   return hashSeed(`${env.seed}:${env.id}:${templateId}:${slot}`);

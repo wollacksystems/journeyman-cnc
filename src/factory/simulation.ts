@@ -15,6 +15,19 @@
  *    and the browser-only capture pipeline — reachable only through the
  *    handle's effectful methods (loaded lazily so pure stages never pull in
  *    the WebGL/encoding stack)
+ *
+ * @module
+ * @example
+ * ```ts
+ * import { createSimulation } from "@/factory/simulation.ts";
+ *
+ * const sim = createSimulation({ seed: 2026, shape: { envCount: 2, perEnv: 3 } });
+ * const summary = sim.describe();
+ * console.log(`${summary.envCount} environments, ${summary.scenarioCount} scenarios`);
+ * for (const env of summary.environments) {
+ *   console.log(env.id, env.palette, env.scenarios.map((s) => s.templateId));
+ * }
+ * ```
  */
 
 import type { EnvSpec } from "./environment";
@@ -73,7 +86,18 @@ export interface SimulationRenderResult {
 
 /** Render options at the facade level: like {@link FactoryRenderOptions}, but
  * progress reports also name the job it belongs to. Progress payload is
- * structural so pure consumers never import the capture stack. */
+ * structural so pure consumers never import the capture stack.
+ *
+ * @example
+ * ```ts
+ * // browser-only: used with sim.render(world, options)
+ * const options: SimulationRenderOptions = {
+ *   onProgress: ({ camera, frame, totalFrames }, job) => {
+ *     console.log(`${job.scenario.id} ${camera}: ${frame}/${totalFrames}`);
+ *   },
+ * };
+ * ```
+ */
 export type SimulationRenderOptions = Omit<FactoryRenderOptions, "onProgress"> & {
   onProgress?: (
     p: {
@@ -97,10 +121,30 @@ export interface Simulation {
   /** The normalized spec this handle was created from. */
   readonly spec: SimulationSpec;
 
-  /** What would this seed produce? No WebGL, no rendering, no downloads. */
+  /**
+   * What would this seed produce? No WebGL, no rendering, no downloads.
+   *
+   * @example
+   * ```ts
+   * const sim = createSimulation({ seed: 2026, shape: { envCount: 2, perEnv: 1 } });
+   * const s = sim.describe();
+   * s.envCount;       // 2
+   * s.scenarioCount;  // 2
+   * s.environments[0]!.scenarios[0]!.templateId; // first generated template
+   * ```
+   */
   describe(): SimulationSummary;
 
-  /** Derive the deterministic execution plan (pure data; headless-safe). */
+  /**
+   * Derive the deterministic execution plan (pure data; headless-safe).
+   *
+   * @example
+   * ```ts
+   * const sim = createSimulation({ seed: 2026, shape: { envCount: 1, perEnv: 2 } });
+   * sim.plan().jobs.map((job) => `${job.env.id}/${job.scenario.templateId}`);
+   * // ["env-00/sensor-trip", "env-00/way-lube"] — templates cycle by slot
+   * ```
+   */
   plan(): FactoryPlan;
 
   /**
@@ -118,6 +162,15 @@ export interface Simulation {
   /**
    * Render the full plan through the shared factory world (the effectful
    * boundary — one clip per camera per job, deterministic frame timing).
+   *
+   * @example
+   * ```ts
+   * // browser-only: needs a live FactoryWorld
+   * const out = await sim.render(world, {
+   *   onProgress: ({ camera, job, index }) => console.log(`${job.scenario.id}: ${camera}`),
+   * });
+   * out.clipCount; // one clip per camera per job in the plan
+   * ```
    */
   render(world: FactoryWorld, options?: SimulationRenderOptions): Promise<SimulationRenderResult>;
 
@@ -196,12 +249,24 @@ async function renderAll(
  * generated until a handle method runs; the same spec always yields the
  * same corpus.
  *
+ * @param spec - Seed + shape. JSON-serializable by contract; a checked-in
+ *   spec replays to the identical corpus on any machine.
+ * @example Describe and plan a corpus headlessly (no WebGL anywhere):
  * ```ts
- * const sim = createSimulation({ seed: 2026, shape: { envCount: 4, perEnv: 3 } });
- * console.log(sim.describe());
- * const plan = sim.plan();             // pure data
- * const out = await sim.render(world); // footage
- * await sim.export(plan, out.results); // stable on-disk corpus
+ * import { createSimulation } from "@/factory/simulation.ts";
+ *
+ * const sim = createSimulation({ seed: 2026, shape: { envCount: 2, perEnv: 3 } });
+ * sim.describe().environments.map((e) => e.palette);
+ * sim.plan().jobs.map((j) => j.scenario.templateId);
+ * ```
+ * @example Full render + export (browser — needs the WebGL/encoding stack):
+ * ```ts
+ * // browser-only: requires a live FactoryWorld (see createFactoryWorld)
+ * const sim = createSimulation({ seed: 2026, shape: { envCount: 1, perEnv: 1 } });
+ * const plan = sim.plan();
+ * const out = await sim.render(world);
+ * const summary = await sim.export(plan, out.results);
+ * summary.clipCount; // one clip per camera per scenario
  * ```
  */
 export function createSimulation(spec: SimulationSpec): Simulation {

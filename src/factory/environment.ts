@@ -10,6 +10,21 @@ import type { Rng } from "./rng";
  * (machine at the origin, front toward +Z, the frame every locked scenario
  * already uses) and mapped into world space by `toWorld`, so any template
  * runs in any generated environment unmodified.
+ *
+ * @module
+ * @example
+ * ```ts
+ * import { createRng } from "@/factory/rng.ts";
+ * import { generateEnvironment, LOCKED_ENV, toWorldXZ } from "@/factory/environment.ts";
+ *
+ * const env = generateEnvironment(31337, 0, createRng(31337));
+ * env.id;        // "env-00"
+ * env.variant;   // flavor label, e.g. "tool-crib-corner"
+ * env.atcSide;   // 1 | -1 — which side the tool changer sits on
+ *
+ * // Machine-frame coordinates map into world space per environment:
+ * const [x, z] = toWorldXZ(env, [0, 0, 2]); // a point 2m in front of the machine
+ * ```
  */
 export interface EnvSpec {
   id: string;
@@ -86,6 +101,20 @@ const VARIANTS = ["night-shift", "day-shift", "swing-shift", "weekend-crew"] as 
 /**
  * Generate a deterministic environment from a seed. `index` disambiguates
  * environments produced from the same seed inside one corpus run.
+ *
+ * @param seed - Environment seed; same seed + same `index` -> same EnvSpec.
+ * @param index - Position in the corpus run; becomes the `env-NN` id suffix.
+ * @param rng - Random stream (callers pass `createRng(seed)`; passing a
+ *   stream shared with other draws would couple the draws).
+ * @example
+ * ```ts
+ * import { createRng } from "@/factory/rng.ts";
+ * import { generateEnvironment } from "@/factory/environment.ts";
+ *
+ * const a = generateEnvironment(42, 0, createRng(42));
+ * const b = generateEnvironment(42, 0, createRng(42));
+ * a.variant === b.variant; // true — pure function of the seed
+ * ```
  */
 export function generateEnvironment(seed: number, index: number, rng: Rng): EnvSpec {
   const rotations = [0, Math.PI / 2, -Math.PI / 2, Math.PI];

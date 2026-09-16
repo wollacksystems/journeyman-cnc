@@ -13,6 +13,18 @@
  * suite's drift check is what makes either path safe: it pins this schema
  * against generated fixtures AND against the reader, so a Zod migration
  * cannot silently change the contract.
+ *
+ * @module
+ * @example
+ * ```ts
+ * import { corpusIndexJsonSchema } from "@/factory/corpus-schema.ts";
+ *
+ * corpusIndexJsonSchema.$id;      // "https://wollacksystems.dev/schemas/..."
+ * corpusIndexJsonSchema.required; // fields every index.json must carry
+ *
+ * // The verify suite serializes it (byte-stable) for external tools:
+ * //   writeFileSync("schemas/journeyman-corpus-index.v1.json", corpusJson(corpusIndexJsonSchema))
+ * ```
  */
 
 export const corpusIndexJsonSchema = {
