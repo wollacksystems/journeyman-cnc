@@ -6,16 +6,26 @@
  * yields the identical corpus on every machine, which is the contract the
  * ingest pipeline depends on.
  *
- * Quickstart:
- *
+ * @module
+ * @example Read a corpus back and stream ground-truth tuples (headless-safe):
  * ```ts
- * import { createSimulation } from "./factory/index.ts";
+ * import {
+ *   iterTrainingTuples,
+ *   readCorpusIndex,
+ *   readScenarioScript,
+ *   validateCorpusIndex,
+ * } from "@/factory/index.ts";
+ * import type { CorpusFilesystem } from "@/factory/index.ts";
  *
- * const sim = createSimulation({ seed: 2026, shape: { envCount: 4, perEnv: 3 } });
- * const described = sim.describe();             // what will this seed produce?
- * const plan = sim.plan();                      // pure data, headless-safe
- * const out = await sim.render(world);          // footage (browser)
- * const saved = await sim.export(plan, out.results); // stable on-disk corpus
+ * declare const fs: CorpusFilesystem;
+ * const raw = await fs.readFile("corpora/0000002026/index.json");
+ * const validation = validateCorpusIndex(raw);
+ * if (validation.ok && validation.index) {
+ *   for (const tuple of iterTrainingTuples(validation.index)) {
+ *     await readScenarioScript(fs, tuple); // provenance-checked
+ *     tuple.clips; // camera -> clip path, relative to the corpus root
+ *   }
+ * }
  * ```
  *
  * Layer map (who may depend on what):

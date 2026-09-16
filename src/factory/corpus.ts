@@ -21,6 +21,16 @@ import { scenarioSeedFor, type FactoryScenario } from "./scenario-gen";
  * scenario id, camera). Re-exporting a corpus with the same root seed
  * overwrites in place and yields byte-identical JSON — no timestamps in any
  * path — so ingest can key on paths as stable recall identities.
+ *
+ * @module
+ * @example
+ * ```ts
+ * import { corpusDirName, corpusIndexPath, corpusRootPath } from "@/factory/corpus.ts";
+ *
+ * corpusDirName(2026);      // "0000002026"
+ * corpusRootPath(2026);     // "corpora/0000002026"
+ * corpusIndexPath(2026);    // "corpora/0000002026/index.json"
+ * ```
  */
 
 /** Zero-padded 10-digit root seed used as the corpus directory name. */
@@ -126,7 +136,17 @@ export interface ScenarioScriptDoc extends FactoryScenario {
   };
 }
 
-/** Build the serializable script document for one job. */
+/**
+ * Build the serializable script document for one job: the generated scenario
+ * plus the provenance block ingest cross-checks against the index.
+ *
+ * @example
+ * ```ts
+ * const doc = buildScenarioScriptDoc(plan.jobs[0]!, 2026);
+ * doc.provenance.rootSeed;  // 2026
+ * doc.beats;                // the scripted beat timeline
+ * ```
+ */
 export function buildScenarioScriptDoc(job: FactoryJob, rootSeed: number): ScenarioScriptDoc {
   const scenario = job.scenario;
   return {
