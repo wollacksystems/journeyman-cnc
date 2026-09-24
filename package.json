@@ -19,6 +19,7 @@
     "preview": "vite preview",
     "smoke": "node scripts/smoke.mts",
     "factory:run": "node scripts/factory-run.mts",
+    "measure:content": "esbuild scripts/measure-corpus-content.mts --bundle --platform=node --format=esm --outfile=scripts/measure-corpus-content.bundle.mjs --log-level=warning && node scripts/measure-corpus-content.bundle.mjs && rm scripts/measure-corpus-content.bundle.mjs",
     "corpus": "esbuild scripts/corpus.mts --bundle --platform=node --format=esm --outfile=scripts/corpus.cli.mjs --log-level=warning && node scripts/corpus.cli.mjs"
   },
   "devDependencies": {
