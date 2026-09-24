@@ -22,7 +22,13 @@
  * Requires Node 23.6+.
  */
 
-import { chromium, type Browser, type Download, type Page } from "playwright-core";
+import {
+  chromium,
+  type Browser,
+  type BrowserContext,
+  type Download,
+  type Page,
+} from "playwright-core";
 import { spawn, type ChildProcess } from "node:child_process";
 import {
   createWriteStream,
@@ -44,6 +50,196 @@ const PER_ENV = Math.max(1, Number(process.env.FACTORY_RUN_PER_ENV ?? 3));
 const ARTIFACTS = join("scripts", "factory-artifacts");
 const HARD_TIMEOUT_MS = Number(process.env.FACTORY_TIMEOUT_MS ?? 2_400_000);
 const STALL_MS = Number(process.env.FACTORY_STALL_MS ?? 240_000);
+/**
+ * Page-side probe (on by default; FACTORY_RUN_PROBE=0 disables it).
+ *
+ * Why: a status read of the boot string ("idle") mid-run means either the page
+ * loaded a fresh document (a reload) or app code rewrote the element. The probe
+ * tells them apart: a sessionStorage document counter plus
+ * performance.timeOrigin proves a new document, and a Node.prototype.textContent
+ * setter patch records every write to #capture-status together with the writing
+ * stack. Per-frame progress writes are only counted — they fire thousands of
+ * times per scenario and would drown the log.
+ */
+const PROBE = process.env.FACTORY_RUN_PROBE !== "0";
+const PROBE_KEY = "__jn_probe_v1";
+/** Cadence of the liveness heartbeat line (status + probe counters + heap). */
+const HEARTBEAT_MS = Number(process.env.FACTORY_RUN_HEARTBEAT_MS ?? 20_000);
+/** onProgress status shape: "<scenario>: <camera> <frame>/<total>". */
+const PROGRESS_STATUS = /^[a-z0-9-]+: [a-z0-9-]+ \d+\/\d+/;
+
+interface ProbeEntry {
+  at: string;
+  kind: string;
+  detail: string;
+}
+
+interface ProbeTelemetry {
+  /** Documents loaded in this tab so far (sessionStorage-persisted). */
+  docs: number;
+  firstDocAt: number;
+  /** Small ring of notable page-side events (documents, status writes, errors). */
+  notable: ProbeEntry[];
+  statusWrites: number;
+  progressWrites: number;
+  /** performance.timeOrigin of the CURRENT document (epoch ms). */
+  timeOrigin: number;
+  heapMb: number | null;
+  readyState: string;
+  /** True when the textContent patch is live in the current document. */
+  patched: boolean;
+}
+
+/**
+ * Runs in the page, before any app script, on every document load.
+ *
+ * `key` is passed as an argument (not closed over): Playwright evaluates the
+ * script from its source text, so module-scope constants are undefined there.
+ */
+function probeInit(key: string): void {
+  const PROGRESS = /^[a-z0-9-]+: [a-z0-9-]+ \d+\/\d+/;
+  type State = { docs: number; firstDocAt: number; notable: ProbeEntry[] };
+  let state: State = { docs: 0, firstDocAt: Date.now(), notable: [] };
+  try {
+    const raw = sessionStorage.getItem(key);
+    const parsed = raw ? (JSON.parse(raw) as State | null) : null;
+    if (parsed && typeof parsed.docs === "number" && Array.isArray(parsed.notable)) state = parsed;
+  } catch {
+    // Blocked storage: the probe still works, in memory only.
+  }
+  const flush = (): void => {
+    state.notable = state.notable.slice(-200);
+    try {
+      sessionStorage.setItem(key, JSON.stringify(state));
+    } catch {
+      // Quota/blocked storage.
+    }
+  };
+  const record = (kind: string, detail: unknown): void => {
+    const entry = { at: new Date().toISOString(), kind, detail: String(detail).slice(0, 500) };
+    state.notable.push(entry);
+    flush();
+    try {
+      console.debug("[probe]", JSON.stringify(entry));
+    } catch {
+      // Console unavailable (shouldn't happen).
+    }
+  };
+
+  state.docs += 1;
+  const win = window as unknown as { __jnProgressWrites?: number; __jnStatusWrites?: number };
+  win.__jnProgressWrites = 0;
+  win.__jnStatusWrites = 0;
+  const nav = performance.getEntriesByType("navigation")[0] as
+    PerformanceNavigationTiming | undefined;
+  record(
+    "document",
+    `#${state.docs} navType=${nav?.type ?? "?"} timeOrigin=${Math.round(performance.timeOrigin)} startedAt=${new Date(performance.timeOrigin).toISOString()} href=${location.href}`,
+  );
+
+  window.addEventListener("pagehide", () => record("pagehide", location.href));
+  window.addEventListener("beforeunload", () => record("beforeunload", location.href));
+  window.addEventListener("error", (e) => record("window.error", (e as ErrorEvent).message));
+  window.addEventListener("unhandledrejection", (e) =>
+    record("window.unhandledrejection", String((e as PromiseRejectionEvent).reason)),
+  );
+
+  // Attribute #capture-status writes to the code that made them. A status that
+  // reads "idle" without a new `document` record is app code, not a reload.
+  const desc = Object.getOwnPropertyDescriptor(Node.prototype, "textContent");
+  if (desc?.get && desc.set) {
+    const getter = desc.get;
+    const setter = desc.set;
+    Object.defineProperty(Node.prototype, "textContent", {
+      configurable: true,
+      enumerable: desc.enumerable,
+      get(this: Node): string | null {
+        return getter.call(this) as string | null;
+      },
+      set(this: Node, value: string): void {
+        if ((this as unknown as { id?: string }).id === "capture-status") {
+          win.__jnStatusWrites = (win.__jnStatusWrites ?? 0) + 1;
+          if (PROGRESS.test(String(value))) {
+            win.__jnProgressWrites = (win.__jnProgressWrites ?? 0) + 1;
+          } else {
+            const stack = (new Error().stack ?? "").split("\n").slice(1, 4).join(" | ");
+            record("status-write", `${JSON.stringify(String(value))} stack=${stack}`);
+          }
+        }
+        setter.call(this, value);
+      },
+    });
+  } else {
+    record("probe-warning", "Node.prototype.textContent is not an accessor — patch skipped");
+  }
+}
+
+/** Attach the page-side probe plus navigation/socket/crash logging to the page. */
+async function installProbe(context: BrowserContext, page: Page): Promise<void> {
+  if (!PROBE) return;
+  await context.addInitScript(probeInit, PROBE_KEY);
+  page.on("close", () => say("page closed"));
+  page.on("crash", () => say("PAGE CRASHED (renderer process gone)"));
+  page.on("load", () => say(`page load: ${page.url()}`));
+  page.on("domcontentloaded", () => say(`page domcontentloaded: ${page.url()}`));
+  page.on("framenavigated", (frame) => {
+    if (frame === page.mainFrame()) say(`NAVIGATED (main frame): ${frame.url()}`);
+  });
+  page.on("websocket", (ws) => {
+    say(`websocket open: ${ws.url()}`);
+    ws.on("close", () => say(`websocket close: ${ws.url()}`));
+    ws.on("socketerror", (err) => say(`websocket error: ${ws.url()} ${String(err)}`));
+  });
+}
+
+/** Read the page-side probe state. Null when the probe is off or page is gone. */
+async function probeTelemetry(page: Page): Promise<ProbeTelemetry | null> {
+  if (!PROBE) return null;
+  try {
+    return (await page.evaluate((key: string) => {
+      type State = { docs?: number; firstDocAt?: number; notable?: ProbeEntry[] };
+      let state: State = {};
+      try {
+        state = JSON.parse(sessionStorage.getItem(key) ?? "{}") as State;
+      } catch {
+        // Blocked storage.
+      }
+      const win = window as unknown as { __jnProgressWrites?: number; __jnStatusWrites?: number };
+      const memory = (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory;
+      const setter = Object.getOwnPropertyDescriptor(Node.prototype, "textContent")?.set;
+      return {
+        docs: state.docs ?? 0,
+        firstDocAt: state.firstDocAt ?? 0,
+        notable: state.notable ?? [],
+        statusWrites: win.__jnStatusWrites ?? 0,
+        progressWrites: win.__jnProgressWrites ?? 0,
+        timeOrigin: Math.round(performance.timeOrigin),
+        heapMb: memory ? Math.round(memory.usedJSHeapSize / 1e6) : null,
+        readyState: document.readyState,
+        patched: typeof setter === "function" && setter.toString().includes("capture-status"),
+      };
+    }, PROBE_KEY)) as ProbeTelemetry;
+  } catch (err) {
+    say(`warn: probe telemetry unavailable: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
+}
+
+/** Log probe telemetry + the notable page-side events (the reload paper trail). */
+async function probeReport(page: Page, label: string, status: string): Promise<void> {
+  const t = await probeTelemetry(page);
+  if (!t) {
+    say(`probe report (${label}): probe unavailable`);
+    return;
+  }
+  say(
+    `probe report (${label}): status="${status}" docs=${t.docs} progressWrites=${t.progressWrites} statusWrites=${t.statusWrites} heap=${t.heapMb ?? "?"}MB readyState=${t.readyState} patched=${t.patched}`,
+  );
+  say(
+    `probe report (${label}): document timeOrigin=${t.timeOrigin} (${new Date(t.timeOrigin).toISOString()})`,
+  );
+  for (const entry of t.notable) say(`  probe ${entry.at} ${entry.kind}: ${entry.detail}`);
+}
 /** Final on-page status emitted by main.ts factoryFlow after saveCorpus. */
 const DONE_PATTERN =
   /^saved corpora\/(\d{10}): (\d+) scenarios, (\d+) clips \+ index\.json \(seed (\d+)\)$/;
@@ -241,6 +437,7 @@ async function runFactoryFlow(browser: Browser): Promise<boolean> {
     viewport: { width: 1024, height: 768 },
   });
   const page = await context.newPage();
+  await installProbe(context, page);
   const pageErrors: string[] = [];
 
   page.on("pageerror", (err) => {
@@ -248,6 +445,9 @@ async function runFactoryFlow(browser: Browser): Promise<boolean> {
     say(`ERR pageerror: ${err.message}`);
   });
   page.on("console", (m) => {
+    if (m.type() !== "error" && /^\[(?:vite|probe)\]/.test(m.text())) {
+      say(`console.${m.type()}: ${m.text()}`);
+    }
     if (m.type() === "error") {
       pageErrors.push(`console.error: ${m.text()}`);
       say(`ERR console: ${m.text()}`);
@@ -305,16 +505,31 @@ async function runFactoryFlow(browser: Browser): Promise<boolean> {
   let lastScenario = "";
   let finalStatus = "";
   let ok = false;
+  /** Log status changes with a light rate limit (progress lines fire per frame). */
+  let lastLoggedStatus = "";
+  let lastStatusLogAt = 0;
+  const logStatus = (text: string): void => {
+    if (text === lastLoggedStatus) return;
+    const now = Date.now();
+    if (PROGRESS_STATUS.test(text) && now - lastStatusLogAt < 15_000) return;
+    lastLoggedStatus = text;
+    lastStatusLogAt = now;
+    say(`status: ${text}`);
+  };
+  let lastHeartbeat = 0;
+  let lastProbe: ProbeTelemetry | null = null;
 
   while (Date.now() - startedAt < HARD_TIMEOUT_MS) {
     const s = ((await page.locator(STATUS).textContent()) ?? "").trim();
     if (s === lastStatus) {
       if (Date.now() - lastChange > STALL_MS && !expectedDone.test(s)) {
+        await probeReport(page, "stall", s);
         throw new Error(`status stalled for >${STALL_MS}ms: "${s}"`);
       }
     } else {
       lastStatus = s;
       lastChange = Date.now();
+      logStatus(s);
       if (s.startsWith("factory failed:")) throw new Error(s);
       const scenario = /^([a-z0-9-]+): [a-z0-9-]+ \d+\/\d+/.exec(s)?.[1] ?? "";
       if (scenario && scenario !== lastScenario) {
@@ -329,9 +544,35 @@ async function runFactoryFlow(browser: Browser): Promise<boolean> {
         break;
       }
     }
+    if (Date.now() - lastHeartbeat >= HEARTBEAT_MS) {
+      lastHeartbeat = Date.now();
+      const t = await probeTelemetry(page);
+      const elapsed = Math.round((Date.now() - startedAt) / 1000);
+      // A new document (or a counter that went backwards) means the page was
+      // reloaded/reset mid-run: the render is gone, so fail now with the probe
+      // trail instead of waiting out the stall window on a boot-string status.
+      if (
+        t &&
+        lastProbe &&
+        (t.timeOrigin !== lastProbe.timeOrigin || t.progressWrites < lastProbe.progressWrites)
+      ) {
+        await probeReport(page, "page-reset", lastStatus);
+        throw new Error(
+          `page re-initialized mid-run at +${elapsed}s (document timeOrigin ${lastProbe.timeOrigin} -> ${t.timeOrigin}, progressWrites ${lastProbe.progressWrites} -> ${t.progressWrites}); the render is no longer running`,
+        );
+      }
+      lastProbe = t;
+      say(
+        `heartbeat +${elapsed}s: status="${lastStatus}" ` +
+          (t
+            ? `docs=${t.docs} progressWrites=${t.progressWrites} statusWrites=${t.statusWrites} heap=${t.heapMb ?? "?"}MB origin=${new Date(t.timeOrigin).toISOString()}`
+            : "probe unavailable"),
+      );
+    }
     await page.waitForTimeout(2000);
   }
 
+  await probeReport(page, ok ? "pass" : "timeout", lastStatus);
   await screenshot(page, "02-final");
   say(ok ? `RESULT: PASS — ${finalStatus}` : `RESULT: FAIL — ${finalStatus || "timed out"}`);
   if (!ok) throw new Error(`factory render did not finish: "${finalStatus || "timed out"}"`);
@@ -341,10 +582,14 @@ async function runFactoryFlow(browser: Browser): Promise<boolean> {
   if (reportedSeed !== ROOT_SEED) {
     throw new Error(`status seed ${reportedSeed} != requested ${ROOT_SEED}`);
   }
-  // Download persistence is async (page 'download' events) and downloads
-  // usually land well before the final status; poll briefly for stragglers
-  // so the on-disk check never races the writer.
-  const drainDeadline = Date.now() + 60_000;
+  // Download persistence is async (page 'download' events); the app triggers
+  // clips first, then manifests, then the corpus JSONs (env/scenario/index) —
+  // "the index downloads last". The final status line is printed before those
+  // last downloads finish streaming, so poll for stragglers until the on-disk
+  // check passes. The window must outlast the largest clip streams too (a
+  // 1080p render writes multi-MB files); closing the browser early cancels
+  // whatever is still in flight and leaves 0-byte placeholders.
+  const drainDeadline = Date.now() + 5 * 60_000;
   let lastErr: Error | null = null;
   while (Date.now() < drainDeadline) {
     try {
