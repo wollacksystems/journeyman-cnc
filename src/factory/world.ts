@@ -2,7 +2,18 @@ import * as THREE from "three";
 import { createAvatar, type Avatar } from "../avatar";
 import type { CameraRig } from "../rig";
 import { createMachineCell, type MachineCell } from "../cell";
-import type { EnvSpec } from "./environment";
+import { toWorldXZ, type EnvSpec } from "./environment";
+
+/**
+ * Static side-camera anchors, authored in the machine frame like every other
+ * scene element. world.setEnv rotates them with the environment yaw so the
+ * "static" side shots always frame the cell's operator zone (static in the
+ * machine frame, not a fixed point of the world).
+ */
+export const SIDE_CAM_ANCHOR_A: readonly [number, number] = [-5.5, 5.5];
+export const SIDE_CAM_ANCHOR_B: readonly [number, number] = [5.5, 5.5];
+export const SIDE_CAM_HEIGHT = 2.6;
+export const SIDE_CAM_LOOK_AT: readonly [number, number, number] = [0, 1.1, 0];
 
 /**
  * Factory world: one renderer + one scene shared across all factory jobs.
@@ -112,6 +123,16 @@ export function createFactoryWorld(
       // group carries the environment yaw so world-space bindings line up.
       world.cell.root.rotation.y = next.machineRotation;
       scene.add(world.cell.root);
+
+      // The rig defines the static side cams in the machine frame too; re-aim
+      // them with the yaw so they keep framing the cell. A world-locked side
+      // cam goes static whenever the machine rotates away from its frustum.
+      const [ax, az] = toWorldXZ(next, SIDE_CAM_ANCHOR_A);
+      const [bx, bz] = toWorldXZ(next, SIDE_CAM_ANCHOR_B);
+      vp("side-a").position.set(ax, SIDE_CAM_HEIGHT, az);
+      vp("side-b").position.set(bx, SIDE_CAM_HEIGHT, bz);
+      vp("side-a").lookAt(SIDE_CAM_LOOK_AT[0], SIDE_CAM_LOOK_AT[1], SIDE_CAM_LOOK_AT[2]);
+      vp("side-b").lookAt(SIDE_CAM_LOOK_AT[0], SIDE_CAM_LOOK_AT[1], SIDE_CAM_LOOK_AT[2]);
 
       scene.background = new THREE.Color(next.palette.background);
       scene.fog = new THREE.Fog(next.palette.fog, next.fog.near, next.fog.far);
