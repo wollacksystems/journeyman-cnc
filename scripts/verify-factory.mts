@@ -10,7 +10,7 @@ import {
   TEMPLATE_IDS,
   TEMPLATE_REGISTRY,
 } from "@/factory/scenario-gen.ts";
-import { generateEnvironment, LOCKED_ENV, toWorld } from "@/factory/environment.ts";
+import { generateEnvironment, LOCKED_ENV, toWorld, toWorldXZ } from "@/factory/environment.ts";
 import { buildFactoryManifest } from "@/factory/manifest.ts";
 import {
   buildCorpusIndex,
@@ -31,7 +31,7 @@ import { driveScenario } from "@/scenario/drive.ts";
 import { validateScenario } from "@/scenario/types.ts";
 import { ENGINE_VERSION } from "@/version.ts";
 import * as factoryApi from "@/factory/index.ts";
-import type { FactoryWorld } from "@/factory/world.ts";
+import { SIDE_CAM_ANCHOR_A, SIDE_CAM_ANCHOR_B, type FactoryWorld } from "@/factory/world.ts";
 import {
   iterTrainingTuples,
   readCorpusIndex,
@@ -222,6 +222,26 @@ check(
   "fault anchor equals toWorld(machine frame)",
   bindingHolds,
   "faultWorld == toWorld(env, [0.42, 1.02, 0.4]) for sensor-trip jobs",
+);
+
+// 4b. The static side cameras rotate with the machine, so they keep framing
+// the cell for any machineRotation (they are static in the machine frame,
+// not the world frame).
+const rot90 = toWorldXZ({ ...LOCKED_ENV, machineRotation: Math.PI / 2 }, SIDE_CAM_ANCHOR_A);
+const rotB90 = toWorldXZ({ ...LOCKED_ENV, machineRotation: Math.PI / 2 }, SIDE_CAM_ANCHOR_B);
+const identityA = toWorldXZ(LOCKED_ENV, SIDE_CAM_ANCHOR_A);
+const identityB = toWorldXZ(LOCKED_ENV, SIDE_CAM_ANCHOR_B);
+check(
+  "static side cameras track machine rotation",
+  Math.abs(rot90[0] - 5.5) < 1e-9 &&
+    Math.abs(rot90[1] - 5.5) < 1e-9 &&
+    Math.abs(rotB90[0] - 5.5) < 1e-9 &&
+    Math.abs(rotB90[1] + 5.5) < 1e-9 &&
+    Math.abs(identityA[0] + 5.5) < 1e-9 &&
+    Math.abs(identityA[1] - 5.5) < 1e-9 &&
+    Math.abs(identityB[0] - 5.5) < 1e-9 &&
+    Math.abs(identityB[1] - 5.5) < 1e-9,
+  "90° maps side-a→(+5.5,+5.5) and side-b→(+5.5,−5.5); Δ0 is the Phase-0 identity",
 );
 
 // 5. Environments actually vary (fixed seeds -> fully deterministic check).
