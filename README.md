@@ -1,4 +1,4 @@
-# journeyman-sim
+# journeyman-cnc
 
 Synthetic CNC training environment for the Journeyman pipeline: a headless-capable
 Three.js rig that renders scripted industrial scenarios, records them per camera,
@@ -115,7 +115,7 @@ semver-contracted TSDoc'd API.
 
 A generated API reference (TypeDoc, single-entry `src/factory/index.ts`) is
 published to GitHub Pages by CI: see
-<https://wollacksystems.github.io/journeyman-sim/>. It regenerates on every
+<https://wollacksystems.github.io/journeyman-cnc/>. It regenerates on every
 push to `main` via `.github/workflows/pages.yml`; the site itself is never
 committed (regenerate locally with `npm run docs:api`).
 
