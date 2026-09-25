@@ -41,3 +41,23 @@ jobs:
         run: npm run build
       - name: Generate API docs (validity gate)
         run: npm run docs:api
+
+  # The brag-footage corpus is a build input for the launch video and the
+  # marketing site, so it is fetched rather than vendored. This job proves the
+  # published contract still resolves end to end: every clip comes back over
+  # plain HTTPS from the release, and every sha256 matches the index. It is its
+  # own job so a code-only PR is never blocked by a release-side outage, and it
+  # needs no dev server, Chromium, or gh — the same command a consumer runs.
+  footage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Fetch and verify the published corpus
+        run: npm run footage -- fetch

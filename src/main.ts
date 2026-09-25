@@ -1,6 +1,6 @@
 import "./style.css";
 import { FrameClock } from "./clock";
-import { CameraRig, VIEWPORT_GRID } from "./rig";
+import { CameraRig, VIEWPORT_GRID, type CameraId } from "./rig";
 import { startInspectorHub } from "./inspector";
 import { scenarios, scenarioById } from "./scenario/registry";
 import type { ScenarioDef } from "./scenario/types";
@@ -261,6 +261,44 @@ if (import.meta.env.DEV) {
     status.textContent = text;
   };
 
+  // Dev-only capture scoping: `?capture=sensor-trip:side-a+head,way-lube`
+  // narrows the corpus batch to individual scenario/camera units. A 1080p clip
+  // is minutes of software-GL rendering, so a full batch is hours of wall clock
+  // — long enough to be interrupted by a reload, a renderer crash, or a thermal
+  // stall. Re-rendering a clip that already landed would also mint "file
+  // (1).mp4" duplicates, so the footage driver asks for exactly the units still
+  // missing and a lost page costs one clip instead of the whole run.
+  const captureSpec = new URLSearchParams(window.location.search).get("capture");
+  const captureUnits: Array<{ scenario: ScenarioDef; cameras: CameraId[] }> = [];
+  if (captureSpec) {
+    const wanted = new Map<string, string[] | null>();
+    for (const entry of captureSpec.split(",")) {
+      const [id, cameraList] = entry.split(":");
+      if (id?.trim()) {
+        wanted.set(
+          id.trim(),
+          cameraList ? cameraList.split("+").map((camera) => camera.trim()) : null,
+        );
+      }
+    }
+    for (const candidate of scenarios) {
+      if (!wanted.has(candidate.id)) continue;
+      const requested = wanted.get(candidate.id);
+      const cameras = requested
+        ? candidate.cameras.filter((camera) => requested.includes(camera))
+        : [...candidate.cameras];
+      if (cameras.length > 0) captureUnits.push({ scenario: candidate, cameras });
+    }
+    if (captureUnits.length === 0) {
+      statusFor(`capture filter matched nothing: ${captureSpec}`);
+      throw new Error(`?capture= matched no scenario/camera: ${captureSpec}`);
+    }
+  } else {
+    for (const candidate of scenarios) {
+      captureUnits.push({ scenario: candidate, cameras: [...candidate.cameras] });
+    }
+  }
+
   async function compositeFlow(): Promise<void> {
     if (busy) return;
     setBusy(true);
@@ -293,30 +331,38 @@ if (import.meta.env.DEV) {
     renderer.setAnimationLoop(null); // batch drives its own frames; don't compete with the live canvas
     try {
       let totalClips = 0;
-      statusFor(`encoding corpus: ${scenarios.length} scenarios`);
-      for (let si = 0; si < scenarios.length; si++) {
-        const activeScenario = scenarios[si];
-        if (!activeScenario) throw new Error(`scenario ${si} missing`);
+      statusFor(`encoding corpus: ${captureUnits.length} scenarios`);
+      for (let si = 0; si < captureUnits.length; si++) {
+        const unit = captureUnits[si];
+        if (!unit) throw new Error(`capture unit ${si} missing`);
+        const activeScenario = unit.scenario;
         const totalFrames = Math.round(activeScenario.durationSec * activeScenario.fps);
         statusFor(
-          `encoding ${activeScenario.id} (${si + 1}/${scenarios.length}): ${activeScenario.cameras.length} cameras x ${totalFrames} frames (${CAPTURE_WIDTH}x${CAPTURE_HEIGHT})`,
+          `encoding ${activeScenario.id} (${si + 1}/${captureUnits.length}): ${unit.cameras.length} cameras x ${totalFrames} frames (${CAPTURE_WIDTH}x${CAPTURE_HEIGHT})`,
         );
         const startedUtc = new Date().toISOString();
-        const result = await captureBatch({
+        let clipsSaved = 0;
+        await captureBatch({
           scenario: activeScenario,
           rig,
           scene,
           avatar,
           cell,
+          cameras: unit.cameras,
           onProgress: (p) => {
             statusFor(
               `scenario ${activeScenario.id}: ${p.camera} ${p.frame}/${p.totalFrames} (camera ${p.cameraIndex + 1}/${p.cameraTotal})`,
             );
           },
+          // Save each clip the moment it finalizes rather than after the whole
+          // scenario: a failure on a late camera then costs one clip instead of
+          // every clip already muxed, and the encoder stops holding finished
+          // MP4s in memory for the rest of the batch.
+          onClip: (clip) => {
+            clipsSaved += 1;
+            downloadBlob(clip.blob, `renders/${activeScenario.id}/${clip.camera}.mp4`);
+          },
         });
-        for (const clip of result.clips) {
-          downloadBlob(clip.blob, `renders/${activeScenario.id}/${clip.camera}.mp4`);
-        }
         const manifest = buildCaptureManifest(
           activeScenario,
           rig,
@@ -328,12 +374,14 @@ if (import.meta.env.DEV) {
           new Blob([JSON.stringify(manifest, null, 2)], { type: "application/json" }),
           `renders/${activeScenario.id}/manifest.json`,
         );
-        totalClips += result.clips.length;
+        totalClips += clipsSaved;
         statusFor(
-          `saved ${activeScenario.id}: ${result.clips.length} clips + manifest (${si + 1}/${scenarios.length})`,
+          `saved ${activeScenario.id}: ${clipsSaved} clips + manifest (${si + 1}/${captureUnits.length})`,
         );
       }
-      statusFor(`saved renders/: ${scenarios.length} scenarios + ${totalClips} clips + manifests`);
+      statusFor(
+        `saved renders/: ${captureUnits.length} scenarios + ${totalClips} clips + manifests`,
+      );
     } catch (error) {
       console.error(error);
       statusFor(`batch failed: ${String(error)}`);

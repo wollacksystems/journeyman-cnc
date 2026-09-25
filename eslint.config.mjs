@@ -8,6 +8,7 @@ export default tseslint.config(
       "dist/",
       "renders/",
       "scripts/smoke-artifacts/",
+      "scripts/footage-artifacts/",
       "package-lock.json",
       "docs/api/",
     ],

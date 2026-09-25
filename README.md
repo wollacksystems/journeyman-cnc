@@ -210,3 +210,68 @@ index.json`, then validates the exported corpus on disk under
 `scripts/factory-artifacts/` (index schema, root seed, scenario count, lesson
 presence, and every referenced artifact non-empty). Point
 `FACTORY_RUN_URL` at any dev server; ~3 min per scenario at 640x360.
+
+## Brag footage
+
+The 20-second Journeyman launch video is cut from this rig's production renders,
+so the footage has a published, checksummed home instead of living only in a
+gitignored `renders/` on whichever machine happened to render it
+(`npm run footage -- <capture|bundle|publish|fetch>`):
+
+```text
+capture  render at 1920x1080                -> scripts/footage-artifacts/renders/<scenario>/{side-a,side-b,head,chest}.mp4 + manifest.json
+bundle   validate + write the index         -> scripts/footage-artifacts/bundle/footage.json (sha256 per clip, beats + narration timeline)
+publish  gh release create/upload           -> release `footage-corpus-v1` (12 clips + 3 manifests + footage.json)
+fetch    download + verify into renders/    -> scripts/footage-artifacts/footage.lock.json
+```
+
+`npm run footage:capture` starts its own dev server and stops it when the run
+ends, so there is nothing to remember to launch and nothing to compete with a
+dev server someone else already has open. That server runs with
+`JOURNEYMAN_CAPTURE_SERVER=1`, which makes `vite.config.ts` watch nothing and
+disable HMR: a 1080p corpus is ~4 minutes of software-GL rendering per camera,
+and a single reload in that window discards the in-flight batch and resets the
+sim clock. Because no edit can disturb a run, the tree stays safe to work in
+while it renders. Point it at an existing server with `--url` (or `FOOTAGE_URL`)
+if you want to watch the batch in a browser you already have open, and use
+`FOOTAGE_SERVER_MODE=smoke` to exercise the whole path at 640x360.
+
+The smoke path above stays what it is — a 640x360 preview pass whose composites
+ride along on `preview-corpus-v1` for PR embeds. `footage` is the production
+path, and it refuses to pretend otherwise: `bundle` and `fetch` both reject a
+sub-1080p corpus unless `--allow-preview` is passed deliberately, and every clip
+is validated as a real MP4 (file-type box up front, movie box present) rather
+than trusted from the on-page status line. That check exists because the
+2026-09-14 preview batch reported success while `atc-jam/*.mp4` landed as 0-byte
+stubs: the page finalizes the status line before the browser finishes writing the
+downloads, so both drivers now drain the download channel before closing the
+browser.
+
+```bash
+npm run footage:capture                # resumes: re-run it as often as you like
+npm run footage:bundle
+npm run footage:publish -- --dry-run   # then without --dry-run (needs gh + write access)
+npm run footage:fetch -- --tag footage-corpus-v1
+```
+
+Capture is a resume loop, not a one-shot. It renders at most
+`FOOTAGE_CAMERAS_PER_ATTEMPT` cameras (4) per page load and re-plans from disk
+between chunks, so an interrupted run costs at most one chunk instead of the
+whole corpus, and simply re-running the command picks up where it stopped.
+Every status read is also bounded, so a renderer that wedges mid-clip is
+reported as a wedge in under a minute rather than hanging the driver, which is
+how a 56-minute silent stall once passed for a slow render. `FOOTAGE_ATTEMPTS`
+(5) bounds consecutive _failed_ chunks, not total chunks.
+
+Consumers (the video edit, the ingest pipeline, the marketing site) only need
+`fetch`: it pulls the index and clips over plain HTTPS from the release, so no
+checkout, token, or `gh` install is required, and it is idempotent — a re-run
+refetches only what is missing or whose sha256 does not match. `--check` verifies
+a local renders directory against the published index without downloading.
+
+So a build that needs the clips fetches them as a step rather than vendoring
+them, and CI runs `npm run footage:fetch` on every push as its own job — the
+corpus is a build input, so a release that goes missing or an index whose
+checksums no longer match should fail loudly instead of quietly shipping a
+stale edit. It stays a separate job so a code-only PR is never blocked by a
+release-side problem.

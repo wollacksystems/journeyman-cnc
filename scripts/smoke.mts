@@ -16,14 +16,21 @@
  * encode + mux + finalize succeed) as the end-to-end pass signal.
  *
  * Usage: npm run smoke   (or: node scripts/smoke.mts; requires Node 23.6+)
+ *
+ * Browser launch, download persistence and fixture validation live in
+ * `scripts/lib/capture-driver.mts`, shared with `scripts/footage.mts` (the
+ * production-scale capture used to cut the launch video).
  */
 
-import { chromium, type Browser, type Download, type Page } from "playwright-core";
-import { spawn, type ChildProcess } from "node:child_process";
-import { createWriteStream, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { createServer } from "node:net";
-import { dirname, join } from "node:path";
-import { tmpdir } from "node:os";
+import type { Browser, Page } from "playwright-core";
+import { mkdirSync, statSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import {
+  formatBytes,
+  launchCaptureBrowser,
+  loadScenarioFixtures,
+  trackDownloads,
+} from "./lib/capture-driver.mts";
 
 const BASE_URL = process.env.SMOKE_URL ?? "http://localhost:5178";
 const STATUS = "#capture-status";
@@ -40,69 +47,15 @@ const PREVIEW_HEIGHT = 360;
 /** Preview target bitrate (MediaRecorder webm) kept well under GitHub's 10 MB asset cap. */
 const PREVIEW_BITS_PER_SECOND = 900_000;
 
-function formatBytes(n: number): string {
-  if (n >= 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-  if (n >= 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${n} B`;
-}
-
-/**
- * Chromium flattens slashes in download names, so the app's
- * "renders/<scenarioId>/<file>" target arrives as "renders_<scenarioId>_<file>"
- * (corpus exports flatten the same way under "corpora_<seed>_..."). Restore
- * the structured layout (scenario ids and cameras use hyphens only).
- */
-function structuredPath(suggested: string): string {
-  const flat = suggested.replace(/\\/g, "/");
-  const corpora = /^corpora_(\d+)_(.+)$/.exec(flat);
-  if (corpora) {
-    // corpora/<seed>/<segment>/... — ids carry no underscores, so the
-    // remaining underscores are exactly the directory separators.
-    const [, seed, rest] = corpora;
-    const parts = rest.split("_");
-    return `corpora/${seed}/${parts[0]}/${parts.slice(1).join("/")}`;
-  }
-  const match = /^renders_([a-z0-9-]+)_(.+)$/.exec(flat);
-  return match ? `renders/${match[1]}/${match[2]}` : flat;
-}
-
-/** Persist one browser download to the durable artifacts dir. */
-async function saveDownload(dl: Download): Promise<{ rel: string; size: number }> {
-  const rel = structuredPath(dl.suggestedFilename() ?? "download.bin");
-  const dest = join(ARTIFACTS, rel);
-  mkdirSync(dirname(dest), { recursive: true });
-  const out = createWriteStream(dest);
-  const stream = await dl.createReadStream();
-  if (!stream) throw new Error(`empty download stream for ${suggested}`);
-  await new Promise<void>((resolve, reject) => {
-    stream.pipe(out);
-    out.on("finish", () => resolve());
-    out.on("error", reject);
-    stream.on("error", reject);
-  });
-  return { rel, size: statSync(dest).size };
-}
-
 function validateFixtures(): void {
+  const fixtures = loadScenarioFixtures();
   for (const scenarioId of EXPECTED_SCENARIOS) {
-    const fixture = JSON.parse(readFileSync(join("fixtures", `${scenarioId}.json`), "utf8")) as {
-      scenarioId?: string;
-      durationSec?: number;
-      fps?: number;
-      cameras?: string[];
-      beats?: unknown[];
-      narration?: unknown[];
-      lesson?: { title?: string; body?: string };
-    };
+    const fixture = fixtures.find((f) => f.scenarioId === scenarioId);
     if (
-      fixture.scenarioId !== scenarioId ||
+      !fixture ||
       fixture.durationSec !== 50 ||
       fixture.fps !== 30 ||
-      JSON.stringify(fixture.cameras) !== JSON.stringify(EXPECTED_CAMERAS) ||
-      !fixture.beats?.length ||
-      !fixture.narration?.length ||
-      !fixture.lesson?.title ||
-      !fixture.lesson.body
+      JSON.stringify(fixture.cameras) !== JSON.stringify(EXPECTED_CAMERAS)
     ) {
       throw new Error(`fixture shape invalid: ${scenarioId}`);
     }
@@ -145,70 +98,14 @@ function summarizeStatus(s: string): string | null {
   return s;
 }
 
-function getFreePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const srv = createServer();
-    srv.once("error", reject);
-    srv.listen(0, "127.0.0.1", () => {
-      const addr = srv.address();
-      const port = typeof addr === "object" && addr ? addr.port : 0;
-      srv.close(() => resolve(port));
-    });
-  });
-}
-
-async function spawnBrowserWithCdp(): Promise<{ browser: Browser; child: ChildProcess }> {
-  const exe = chromium.executablePath();
-  const port = await getFreePort();
-  const profile = join(tmpdir(), `journeyman-smoke-cdp-${process.pid}`);
-  const child = spawn(
-    exe,
-    [
-      `--remote-debugging-port=${port}`,
-      `--user-data-dir=${profile}`,
-      "--headless",
-      "--no-first-run",
-      "--no-default-browser-check",
-      "--disable-background-networking",
-      "--enable-webgl",
-      "--ignore-gpu-blocklist",
-      "--enable-unsafe-swiftshader",
-      "--mute-audio",
-      "about:blank",
-    ],
-    { stdio: ["ignore", "ignore", "pipe"], windowsHide: true },
-  );
-  child.stderr?.resume();
-  const endpoint = `http://127.0.0.1:${port}`;
-  const deadline = Date.now() + 30_000;
-  let up = false;
-  while (Date.now() < deadline) {
-    if (child.exitCode !== null) {
-      throw new Error(`cdp browser exited with code ${child.exitCode}`);
-    }
-    try {
-      const res = await fetch(`${endpoint}/json/version`);
-      if (res.ok) {
-        up = true;
-        break;
-      }
-    } catch {
-      // not up yet
-    }
-    await new Promise((r) => setTimeout(r, 500));
-  }
-  if (!up) throw new Error(`cdp browser did not become ready at ${endpoint}`);
-  const browser = await chromium.connectOverCDP(endpoint);
-  return { browser, child };
-}
-
 async function runCaptureFlow(browser: Browser): Promise<boolean> {
   const context = await browser.newContext({
     acceptDownloads: true,
     viewport: { width: 1024, height: 768 },
   });
   const page = await context.newPage();
-  let saved = 0;
+  const tracker = trackDownloads(ARTIFACTS, say);
+  tracker.attach(page);
 
   const pageErrors: string[] = [];
   page.on("pageerror", (err) => {
@@ -220,17 +117,6 @@ async function runCaptureFlow(browser: Browser): Promise<boolean> {
       pageErrors.push(`console.error: ${m.text()}`);
       say(`ERR console: ${m.text()}`);
     }
-  });
-
-  page.on("download", (dl) => {
-    void saveDownload(dl)
-      .then(({ rel, size }) => {
-        saved += 1;
-        say(`saved artifact: ${rel} (${formatBytes(size)})`);
-      })
-      .catch((err: unknown) =>
-        say(`ERR download: ${err instanceof Error ? err.message : String(err)}`),
-      );
   });
 
   validateFixtures();
@@ -341,7 +227,13 @@ async function runCaptureFlow(browser: Browser): Promise<boolean> {
     throw new Error(`partial corpus render: expected "${EXPECTED_FINAL}", got "${finalStatus}"`);
   }
   if (pageErrors.length > 0) say(`page/console errors observed: ${pageErrors.length}`);
-  say(`durable artifacts: ${saved} file(s) under ${ARTIFACTS}`);
+
+  // The status line fires when the mux finalized, not when the browser has
+  // finished writing the file, so let the download channel drain before the
+  // context closes — otherwise the tail of the batch lands as 0-byte stubs.
+  const { saved, failures } = await tracker.settled();
+  if (failures.length > 0) say(`download failures: ${failures.length}`);
+  say(`durable artifacts: ${saved.length} file(s) under ${ARTIFACTS}`);
 
   await context.close().catch(() => {});
   return ok;
@@ -350,26 +242,7 @@ async function runCaptureFlow(browser: Browser): Promise<boolean> {
 async function main(): Promise<boolean> {
   say(`base: ${BASE_URL}`);
 
-  let browser: Browser;
-  let child: ChildProcess | null = null;
-  if (process.env.SMOKE_USE_CDP === "1") {
-    say("launching via CDP (SMOKE_USE_CDP=1)...");
-    ({ browser, child } = await spawnBrowserWithCdp());
-  } else {
-    try {
-      browser = await chromium.launch({
-        headless: true,
-        timeout: 20_000,
-        args: ["--enable-webgl", "--ignore-gpu-blocklist", "--enable-unsafe-swiftshader"],
-      });
-      say("launched via Playwright-managed chromium");
-    } catch (err) {
-      say(`playwright launch failed: ${err instanceof Error ? err.message : String(err)}`);
-      say("falling back to CDP-over-HTTP launch...");
-      ({ browser, child } = await spawnBrowserWithCdp());
-    }
-  }
-
+  const { browser, child } = await launchCaptureBrowser(say);
   try {
     return await runCaptureFlow(browser);
   } finally {

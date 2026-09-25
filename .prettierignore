@@ -3,6 +3,7 @@ dist/
 renders/
 scripts/smoke-artifacts/
 scripts/factory-artifacts/
+scripts/footage-artifacts/
 # Generated artifact: emitted from src/factory/corpus-schema.ts (freshness
 # is pinned by verify:factory; formatting is the emitter's business, not Prettier's).
 schemas/
