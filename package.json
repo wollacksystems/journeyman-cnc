@@ -34,6 +34,7 @@
     "vite": "^7.1.0"
   },
   "dependencies": {
+    "journeyman-sim": "git+https://github.com/wollacksystems/journeyman-sim.git#13a7a38fd98b05dbba12443a669a30989f7cdeeb",
     "mediabunny": "^1.56.0"
   }
 }
