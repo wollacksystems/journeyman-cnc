@@ -18,6 +18,11 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "smoke": "node scripts/smoke.mts",
+    "footage": "node scripts/footage.mts",
+    "footage:capture": "node scripts/footage.mts capture",
+    "footage:bundle": "node scripts/footage.mts bundle",
+    "footage:publish": "node scripts/footage.mts publish",
+    "footage:fetch": "node scripts/footage.mts fetch",
     "factory:run": "node scripts/factory-run.mts",
     "corpus": "esbuild scripts/corpus.mts --bundle --platform=node --format=esm --outfile=scripts/corpus.cli.mjs --log-level=warning && node scripts/corpus.cli.mjs"
   },

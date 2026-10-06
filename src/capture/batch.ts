@@ -26,7 +26,20 @@ export interface BatchOptions {
   cell: MachineCell;
   width?: number;
   height?: number;
+  /**
+   * Cameras to render, in order; defaults to the scenario's whole list.
+   * Scoping is what makes a multi-hour batch resumable a few clips at a time.
+   */
+  cameras?: CameraId[];
   onProgress?: (p: BatchProgress) => void;
+  /**
+   * Streaming hook, called the instant a clip finishes muxing and before the
+   * next camera allocates its renderer. When supplied the caller takes
+   * ownership and the blob is NOT retained in the result, so peak memory stays
+   * at one clip instead of a whole scenario's worth. That matters at 1080p,
+   * where holding every MP4 is enough to stall the renderer mid-run.
+   */
+  onClip?: (clip: BatchClip) => void;
 }
 
 export interface BatchProgress {
@@ -37,8 +50,14 @@ export interface BatchProgress {
   cameraTotal: number;
 }
 
+export interface BatchClip {
+  camera: CameraId;
+  blob: Blob;
+}
+
 export interface BatchResult {
-  clips: Array<{ camera: CameraId; blob: Blob }>;
+  /** Clips in camera order; empty when `onClip` streamed them out instead. */
+  clips: BatchClip[];
 }
 
 function renderFrameAt(
@@ -62,7 +81,8 @@ function renderFrameAt(
  * Determinism: frame f of every clip is driven at sim time t = f / fps, so
  * clips are frame-aligned with each other and with the composite webm that
  * records the same sim time. Renders buffer to memory (BufferTarget) and are
- * returned as blobs for the caller to save under renders/.
+ * returned as blobs for the caller to save under renders/ — or streamed out one
+ * at a time via onClip, which long 1080p batches should do to bound memory.
  */
 export async function captureBatch(options: BatchOptions): Promise<BatchResult> {
   if (!import.meta.env?.DEV) {
@@ -77,10 +97,11 @@ export async function captureBatch(options: BatchOptions): Promise<BatchResult> 
   const codec = await pickVideoCodec(w, h);
 
   const clips: BatchResult["clips"] = [];
-  const cameraTotal = scenario.cameras.length;
+  const cameraList = options.cameras ?? scenario.cameras;
+  const cameraTotal = cameraList.length;
 
   for (let ci = 0; ci < cameraTotal; ci++) {
-    const cameraId = scenario.cameras[ci];
+    const cameraId = cameraList[ci];
     if (!cameraId) throw new Error("scenario camera list empty");
 
     const canvas = document.createElement("canvas");
@@ -119,14 +140,28 @@ export async function captureBatch(options: BatchOptions): Promise<BatchResult> 
         cameraTotal,
       });
     }
-
     source.close();
-    renderer.dispose();
     await output.finalize();
 
     const buffer = target.buffer;
     if (!buffer) throw new Error(`No output buffer produced for ${cameraId}`);
-    clips.push({ camera: cameraId, blob: new Blob([buffer], { type: "video/mp4" }) });
+    const clip: BatchClip = { camera: cameraId, blob: new Blob([buffer], { type: "video/mp4" }) };
+
+    // Hand the clip off before the next camera spins up: holding a whole
+    // scenario's MP4s in memory starves the renderer, and a stall here takes
+    // the entire run down with it while nothing has reached disk yet.
+    if (options.onClip) options.onClip(clip);
+    else clips.push(clip);
+
+    // dispose() frees GPU resources but leaves the WebGL context allocated,
+    // and Chromium caps how many live contexts a page may hold. Allocating
+    // one renderer per camera exhausts that budget partway through a long
+    // batch and the tab stalls — so drop the context explicitly, then the
+    // canvas backing it.
+    renderer.dispose();
+    renderer.forceContextLoss();
+    canvas.width = 0;
+    canvas.height = 0;
   }
 
   return { clips };
